@@ -5,6 +5,7 @@ import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { Sparkles, Target, Zap, CheckCircle, ArrowRight, Loader } from 'lucide-react';
 import toast from 'react-hot-toast';
+import WhatIfSimulator from '../components/WhatIfSimulator';
 
 export default function CareerRoadmap() {
   const { currentUser } = useAuth();
@@ -448,6 +449,13 @@ Format clearly with headers and bullet points.`;
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Feature 7 — What-If Career Simulator */}
+      <WhatIfSimulator
+        skills={userData?.skills || []}
+        profileCompletion={Math.min(100, ((userData?.skills?.length || 0) * 10))}
+        interviewScore={null}
+      />
 
       <style>{`
         @keyframes spin {

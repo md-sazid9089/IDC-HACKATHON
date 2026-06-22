@@ -6,6 +6,7 @@ import { db } from "../firebase";
 import { collection, doc, setDoc, getDoc, updateDoc, arrayUnion, serverTimestamp } from "firebase/firestore";
 import toast from "react-hot-toast";
 import ReactMarkdown from "react-markdown";
+import ReasoningCard from "../components/ReasoningCard";
 
 export default function Chatassistance() {
   const { currentUser } = useAuth();
@@ -255,8 +256,17 @@ export default function Chatassistance() {
       const data = await res.json();
       const reply = data.reply;
 
-      // Add bot response
-      const updatedMessages = [...newMessages, { role: "model", content: reply }];
+      // Feature 5 — attach RAG explainability to the model message so
+      // ReasoningCard can render below it. Backend is additive: these
+      // fields may be missing on older deployments — default safely.
+      const modelMsg = {
+        role: "model",
+        content: reply,
+        factors: Array.isArray(data.factors) ? data.factors : [],
+        confidence: data.confidence || null,
+        basis: data.basis || null,
+      };
+      const updatedMessages = [...newMessages, modelMsg];
       setMessages(updatedMessages);
 
       // Save to Firebase
@@ -385,6 +395,16 @@ export default function Chatassistance() {
                       ))}
                     </div>
                   </div>
+                )}
+
+                {/* Feature 5 — RAG explainability */}
+                {msg.role === "model" && Array.isArray(msg.factors) && msg.factors.length > 0 && (
+                  <ReasoningCard
+                    title="Why this answer?"
+                    factors={msg.factors}
+                    basis={msg.basis}
+                    confidence={msg.confidence}
+                  />
                 )}
               </div>
               {msg.role === "user" && (

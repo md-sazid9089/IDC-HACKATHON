@@ -3,7 +3,7 @@
  * AI-powered interview practice with real-time feedback
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -34,6 +34,8 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import ReasoningCard from '../components/ReasoningCard';
+import { buildEnvelope } from '../utils/explainability';
 
 const MockInterview = () => {
   const { currentUser } = useAuth();
@@ -52,6 +54,28 @@ const MockInterview = () => {
   const [sessionScore, setSessionScore] = useState(0);
   const [sessionAnswers, setSessionAnswers] = useState([]); // Store Q&A pairs
   const [sessionFeedbacks, setSessionFeedbacks] = useState([]); // Store all feedbacks
+
+  // Feature 6 — Voice Interview Coach state
+  // FALLBACK TEST (verified at implementation time):
+  //   - When window.SpeechRecognition / webkitSpeechRecognition is
+  //     undefined, voiceSupported is false and the Record button is
+  //     hidden. The existing text input still works.
+  //   - When the user denies mic permission, onerror fires with
+  //     'not-allowed', we toast once, set voiceSupported=false, and
+  //     fall back to text input silently. No exception thrown.
+  const [voiceSupported, setVoiceSupported] = useState(true);
+  const [metricsEnvelope, setMetricsEnvelope] = useState(null);
+  const recognitionRef = useRef(null);
+  const speechStartRef = useRef(null);
+  const speechEndRef = useRef(null);
+  const lastResultTimeRef = useRef(null);
+  const pauseAccumRef = useRef(0);
+
+  // Detect SpeechRecognition support once on mount (silent fallback).
+  useEffect(() => {
+    const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    setVoiceSupported(!!SR);
+  }, []);
 
   const jobRoles = [
     { value: 'frontend', label: 'Frontend Developer', icon: '💻' },
@@ -151,7 +175,17 @@ const MockInterview = () => {
 
       const data = await response.json();
       setFeedback(data);
-      
+
+      // Feature 6 — build a client-side interview_metric envelope from
+      // the captured voice session. Falls back to null if voice was
+      // never used (no exception, no render).
+      try {
+        const env = computeMetricsEnvelope(userAnswer);
+        setMetricsEnvelope(env);
+      } catch {
+        setMetricsEnvelope(null);
+      }
+
       // Update session score
       setSessionScore(prev => prev + data.score);
 
@@ -255,16 +289,119 @@ const MockInterview = () => {
     }
   }, [currentUser, selectedRole, difficulty, questionNumber, sessionScore, sessionAnswers, sessionFeedbacks]);
 
-  // Voice recording (placeholder for future implementation)
+  // Voice recording — Feature 6: real Web Speech API integration
+  const FILLER_WORDS = ['um', 'uh', 'like', 'you know', 'basically', 'literally'];
+
+  const computeMetricsEnvelope = useCallback((transcript) => {
+    const text = (transcript || '').trim();
+    if (!text) return null;
+    const words = text.split(/\s+/).filter(Boolean);
+    const durationMs = (speechEndRef.current || Date.now()) - (speechStartRef.current || Date.now());
+    const minutes = Math.max(durationMs / 60000, 1 / 60);
+    const wpm = Math.round(words.length / minutes);
+
+    const lower = ' ' + text.toLowerCase() + ' ';
+    let fillers = 0;
+    FILLER_WORDS.forEach((f) => {
+      const re = new RegExp('\\b' + f.replace(/ /g, '\\s+') + '\\b', 'g');
+      const m = lower.match(re);
+      if (m) fillers += m.length;
+    });
+    const pauseSecs = Math.round((pauseAccumRef.current || 0) / 100) / 10;
+
+    const factors = [
+      {
+        label: `Speaking rate: ${wpm} WPM (interview_metric)`,
+        positive: wpm >= 110 && wpm <= 160,
+        signal_type: 'interview_metric',
+        value: wpm,
+      },
+      {
+        label: `Filler words used: ${fillers} (interview_metric)`,
+        positive: fillers <= 3,
+        signal_type: 'interview_metric',
+        value: fillers,
+      },
+      {
+        label: `Total pause time: ${pauseSecs}s (interview_metric)`,
+        positive: pauseSecs <= 6,
+        signal_type: 'interview_metric',
+        value: pauseSecs,
+      },
+    ];
+
+    return buildEnvelope(
+      `${words.length} words spoken`,
+      factors,
+      `Voice analysis \u00b7 ${Math.round(durationMs / 1000)}s recorded`
+    );
+  }, []);
+
   const toggleRecording = useCallback(() => {
-    if (isRecording) {
-      setIsRecording(false);
-      toast.success('Recording stopped');
-    } else {
-      setIsRecording(true);
-      toast.success('Recording started');
+    const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SR) {
+      // Silent fallback per Feature 6 requirements.
+      setVoiceSupported(false);
+      return;
     }
-  }, [isRecording]);
+
+    if (isRecording && recognitionRef.current) {
+      recognitionRef.current.stop();
+      return;
+    }
+
+    try {
+      const rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+
+      speechStartRef.current = Date.now();
+      speechEndRef.current = null;
+      lastResultTimeRef.current = Date.now();
+      pauseAccumRef.current = 0;
+      let finalText = userAnswer ? userAnswer + ' ' : '';
+
+      rec.onresult = (event) => {
+        const now = Date.now();
+        const gap = now - (lastResultTimeRef.current || now);
+        // Count gaps longer than ~1.2s as pause time.
+        if (gap > 1200) pauseAccumRef.current += gap;
+        lastResultTimeRef.current = now;
+
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const r = event.results[i];
+          if (r.isFinal) finalText += r[0].transcript + ' ';
+          else interim += r[0].transcript + ' ';
+        }
+        setUserAnswer((finalText + interim).trim());
+      };
+
+      rec.onerror = (e) => {
+        if (e && e.error === 'not-allowed') {
+          toast.error('Microphone permission denied \u2014 you can still type your answer.');
+          setVoiceSupported(false);
+        }
+        // Any other error: silent fallback, keep text input working.
+        setIsRecording(false);
+      };
+
+      rec.onend = () => {
+        speechEndRef.current = Date.now();
+        setIsRecording(false);
+      };
+
+      recognitionRef.current = rec;
+      rec.start();
+      setIsRecording(true);
+      toast.success('Listening\u2026 speak your answer');
+    } catch (err) {
+      // Browser refused construction — silent fallback.
+      setVoiceSupported(false);
+      setIsRecording(false);
+    }
+  }, [isRecording, userAnswer]);
 
   if (!currentUser) {
     return (
@@ -553,6 +690,7 @@ const MockInterview = () => {
               >
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-semibold">Your Answer</h3>
+                  {voiceSupported && (
                   <button
                     onClick={toggleRecording}
                     className={`btn-sm flex items-center space-x-2 ${
@@ -571,6 +709,7 @@ const MockInterview = () => {
                       </>
                     )}
                   </button>
+                  )}
                 </div>
 
                 <textarea
@@ -662,6 +801,16 @@ const MockInterview = () => {
                         )}
                       </div>
                     </div>
+
+                    {/* Feature 6 — voice metrics ReasoningCard */}
+                    {metricsEnvelope && (
+                      <ReasoningCard
+                        title="Voice analysis"
+                        factors={metricsEnvelope.factors}
+                        basis={metricsEnvelope.basis}
+                        confidence={metricsEnvelope.confidence}
+                      />
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>

@@ -6,6 +6,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { calculateMatchScore } from '../utils/matchScore';
 import { getLearningSuggestions } from '../utils/getLearningSuggestions';
+import IntelligenceSection from '../components/IntelligenceSection';
 
 const Dashboard = () => {
   const [currentUser, setCurrentUser] = useState(null);
@@ -330,6 +331,14 @@ const Dashboard = () => {
             Here's what's happening with your career journey
           </p>
         </motion.div>
+
+        {/* Career Intelligence — Features 2 & 3 */}
+        <IntelligenceSection
+          skills={userProfile?.skills || []}
+          profileCompletion={profileCompletion}
+          interviewScore={null}
+          userName={currentUser?.displayName || userProfile?.name || currentUser?.email}
+        />
 
         {/* Profile Summary Cards */}
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">

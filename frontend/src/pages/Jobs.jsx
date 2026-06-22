@@ -576,8 +576,10 @@ const JobCard = ({ job, index, learningResources, currentUser }) => {
                 transition={{ duration: 0.3 }}
                 className="mt-6 space-y-4"
               >
-                <SkillGapCard 
-                  missingSkills={job.matchDetails.missingSkills} 
+                <SkillGapCard
+                  missingSkills={job.matchDetails.missingSkills}
+                  matchedSkills={job.matchDetails.matchedSkills}
+                  breakdown={job.matchDetails.breakdown}
                   matchScore={job.matchScore}
                 />
                 {learningSuggestions.suggestions.length > 0 && (

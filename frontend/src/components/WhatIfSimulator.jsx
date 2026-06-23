@@ -19,8 +19,9 @@ import { motion, useSpring, useTransform } from 'framer-motion';
 import { Sparkles, Wand2 } from 'lucide-react';
 import ReasoningCard from './ReasoningCard';
 import { buildEnvelope } from '../utils/explainability';
+import API_URL from '../config';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+const API_BASE = API_URL.replace(/\/+$/, '');
 
 // Mirror of backend CAREER_DNA_CATEGORIES (lowercase) — keep in sync.
 const SKILL_TO_CATEGORY = {

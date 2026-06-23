@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import API_URL from '../config';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Mic, 
@@ -125,7 +126,7 @@ const MockInterview = () => {
   const generateQuestion = useCallback(async () => {
     setLoading(true);
     try {
-      const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+      const apiUrl = API_URL.replace(/\/+$/, '');
       const response = await fetch(`${apiUrl}/generate-interview-question`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -161,7 +162,7 @@ const MockInterview = () => {
 
     setLoading(true);
     try {
-      const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+      const apiUrl = API_URL.replace(/\/+$/, '');
       const response = await fetch(`${apiUrl}/evaluate-interview-answer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

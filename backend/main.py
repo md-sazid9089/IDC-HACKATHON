@@ -10,10 +10,25 @@ import time
 import urllib.request
 import urllib.error
 from pathlib import Path
-from google import genai
 from io import BytesIO
 from PyPDF2 import PdfReader
 from pydantic import BaseModel, Field  # noqa: F401 — used by existing interview request models below
+
+# ---------------------------------------------------------------------------
+# Optional ChromaDB + sentence-transformers (installed by build_chromadb.py)
+# Gracefully degraded if not installed — falls back to HF API / keyword search.
+# ---------------------------------------------------------------------------
+try:
+    import chromadb as _chromadb  # type: ignore
+    _CHROMADB_AVAILABLE = True
+except ImportError:
+    _CHROMADB_AVAILABLE = False
+
+try:
+    from sentence_transformers import SentenceTransformer as _SentenceTransformer  # type: ignore
+    _ST_AVAILABLE = True
+except ImportError:
+    _ST_AVAILABLE = False
 
 # Load environment variables
 load_dotenv()
@@ -24,19 +39,391 @@ app = FastAPI()
 # Configure CORS middleware FIRST (before routes)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for now
-    allow_credentials=False,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
-# Initialize Gemini client
-api_key = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=api_key)
+# ---------------------------------------------------------------------------
+# CV analysis helpers (no LLM — pure text extraction)
+# ---------------------------------------------------------------------------
 
-# Model configuration
-MODEL_NAME = "gemini-2.0-flash"
+def _extract_skills_from_text(text: str) -> List[str]:
+    """Match known skills against raw CV text (case-insensitive)."""
+    known_skills = [
+        "Python", "JavaScript", "TypeScript", "React", "Vue", "Angular",
+        "Next.js", "Node.js", "Express", "FastAPI", "Django", "Flask",
+        "HTML", "CSS", "TailwindCSS", "SQL", "PostgreSQL", "MongoDB",
+        "Redis", "Docker", "Kubernetes", "AWS", "GCP", "Azure", "Git",
+        "Firebase", "GraphQL", "REST", "TensorFlow", "PyTorch", "Figma",
+        "Linux", "CI/CD", "Jenkins", "Terraform", "Pandas", "NumPy",
+        "scikit-learn", "Machine Learning", "Deep Learning", "NLP",
+        "Communication", "Leadership", "Teamwork", "Problem Solving",
+    ]
+    text_lower = text.lower()
+    return [s for s in known_skills if s.lower() in text_lower]
+
+
+def _extract_tools_from_text(text: str) -> List[str]:
+    """Alias that also catches tool/platform keywords."""
+    tools = [
+        "VS Code", "IntelliJ", "PyCharm", "Postman", "Jira", "Confluence",
+        "Slack", "Notion", "Trello", "GitHub", "GitLab", "Bitbucket",
+        "Heroku", "Vercel", "Netlify", "Nginx", "Apache", "RabbitMQ",
+        "Kafka", "Elasticsearch", "Celery", "FastAPI", "Streamlit",
+    ]
+    text_lower = text.lower()
+    return [t for t in tools if t.lower() in text_lower]
+
+
+def _extract_roles_from_text(text: str) -> List[str]:
+    """Detect job titles / domain keywords in CV text."""
+    roles = [
+        "Software Engineer", "Frontend Developer", "Backend Developer",
+        "Full Stack Developer", "Data Scientist", "Data Analyst",
+        "Machine Learning Engineer", "DevOps Engineer", "Site Reliability Engineer",
+        "UI/UX Designer", "Product Manager", "Mobile Developer",
+        "Cloud Architect", "Security Engineer", "QA Engineer",
+        "Web Development", "Data Engineering", "Artificial Intelligence",
+        "Healthcare", "FinTech", "E-commerce",
+    ]
+    text_lower = text.lower()
+    return [r for r in roles if r.lower() in text_lower]
+
+
+def _summarize_cv_no_llm(full_text: str) -> dict:
+    """Return a structured CV dict without any LLM call."""
+    return {
+        "keySkills": _extract_skills_from_text(full_text),
+        "toolsTechnologies": _extract_tools_from_text(full_text),
+        "rolesAndDomains": _extract_roles_from_text(full_text),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Interview question bank (no LLM)
+# ---------------------------------------------------------------------------
+import random as _random
+
+_INTERVIEW_QUESTIONS: Dict[str, Dict[str, List[str]]] = {
+    "frontend": {
+        "beginner": [
+            "What is the difference between HTML, CSS, and JavaScript?",
+            "What is the box model in CSS?",
+            "Explain the difference between block and inline elements.",
+            "What is a media query and how is it used?",
+            "What does the DOM stand for?",
+        ],
+        "intermediate": [
+            "How does React's virtual DOM work?",
+            "Explain the difference between props and state in React.",
+            "What is event delegation in JavaScript?",
+            "How do you handle API errors in a React app?",
+            "What is the difference between `==` and `===` in JavaScript?",
+        ],
+        "advanced": [
+            "How do you optimize a React app with performance bottlenecks?",
+            "Explain code-splitting and lazy loading in React.",
+            "What are micro-frontends and when would you use them?",
+            "How would you implement server-side rendering in Next.js?",
+            "Explain the reconciliation algorithm in React.",
+        ],
+    },
+    "backend": {
+        "beginner": [
+            "What is REST and what are its principles?",
+            "What is the difference between SQL and NoSQL?",
+            "What is an HTTP status code and name a few common ones?",
+            "What is version control and why is it important?",
+            "What is an API?",
+        ],
+        "intermediate": [
+            "What is database indexing and when should you use it?",
+            "Explain the difference between authentication and authorization.",
+            "What is Docker and why is it used?",
+            "How does connection pooling work in databases?",
+            "What is middleware in the context of web frameworks?",
+        ],
+        "advanced": [
+            "How would you design a scalable microservices architecture?",
+            "Explain CAP theorem and its implications for distributed systems.",
+            "What are the trade-offs between SQL and NoSQL at scale?",
+            "How would you implement rate limiting in an API?",
+            "Explain eventual consistency and how to handle it.",
+        ],
+    },
+    "fullstack": {
+        "beginner": [
+            "What is the role of a full-stack developer?",
+            "What is the difference between a frontend and backend?",
+            "What is a database and how does it relate to a web app?",
+            "Explain what version control is and why it matters.",
+            "What is an HTTP request?",
+        ],
+        "intermediate": [
+            "How do you connect a React frontend to a FastAPI backend?",
+            "Explain CORS and how to configure it.",
+            "What is JWT and how is it used for authentication?",
+            "How do you handle form validation on both client and server?",
+            "What is a monorepo and what are its advantages?",
+        ],
+        "advanced": [
+            "How would you architect a full-stack app for 1 million users?",
+            "Explain the trade-offs between SSR, SSG, and CSR.",
+            "How would you implement real-time features using WebSockets?",
+            "Describe your approach to CI/CD for a full-stack project.",
+            "How do you handle database migrations in a live system?",
+        ],
+    },
+    "data-science": {
+        "beginner": [
+            "What is the difference between supervised and unsupervised learning?",
+            "What is a confusion matrix?",
+            "Explain what overfitting means.",
+            "What is Pandas and what is it used for?",
+            "What is a train/test split and why is it used?",
+        ],
+        "intermediate": [
+            "How does gradient descent work?",
+            "Explain the bias-variance trade-off.",
+            "What is cross-validation and why is it important?",
+            "What are the key differences between Random Forest and XGBoost?",
+            "How do you handle missing data in a dataset?",
+        ],
+        "advanced": [
+            "Explain how a transformer model works.",
+            "How would you design an end-to-end MLOps pipeline?",
+            "What is the difference between batch and online learning?",
+            "How do you detect and handle data drift in production?",
+            "Explain how a RAG pipeline works.",
+        ],
+    },
+    "devops": {
+        "beginner": [
+            "What is Docker and what problem does it solve?",
+            "What is CI/CD?",
+            "What is the difference between a VM and a container?",
+            "What is version control and why is it used in DevOps?",
+            "What is a deployment pipeline?",
+        ],
+        "intermediate": [
+            "What is Kubernetes and what problems does it solve?",
+            "How does a load balancer work?",
+            "Explain blue-green deployment.",
+            "What is infrastructure as code and why is it valuable?",
+            "How do you monitor a production service?",
+        ],
+        "advanced": [
+            "How would you design a zero-downtime deployment strategy?",
+            "Explain how Kubernetes handles pod scheduling.",
+            "What is a service mesh and when would you use one?",
+            "How do you handle secrets management at scale?",
+            "Describe your approach to multi-region high availability.",
+        ],
+    },
+    "mobile": {
+        "beginner": [
+            "What is the difference between native and cross-platform mobile development?",
+            "What is React Native?",
+            "What is the difference between iOS and Android development?",
+            "What is a mobile app lifecycle?",
+            "What is responsive design in mobile context?",
+        ],
+        "intermediate": [
+            "How do you handle state management in React Native?",
+            "Explain the difference between Expo and bare React Native.",
+            "How do you handle offline data in a mobile app?",
+            "What are push notifications and how do you implement them?",
+            "How do you optimize performance in a React Native app?",
+        ],
+        "advanced": [
+            "How would you architect a cross-platform mobile app for 1M users?",
+            "Explain how the React Native bridge works.",
+            "How do you implement deep linking in a mobile app?",
+            "How do you approach A/B testing in a mobile app?",
+            "What is code-push and how does it enable OTA updates?",
+        ],
+    },
+    "ui-ux": {
+        "beginner": [
+            "What is the difference between UI and UX?",
+            "What is a wireframe?",
+            "What tools do you use for UI design?",
+            "What is a design system?",
+            "What is accessibility in web design?",
+        ],
+        "intermediate": [
+            "How do you conduct user research?",
+            "What is usability testing and how do you run it?",
+            "Explain the concept of information architecture.",
+            "How do you hand off designs to developers?",
+            "What is the difference between a prototype and a mockup?",
+        ],
+        "advanced": [
+            "How do you measure the success of a design change?",
+            "Describe your process for redesigning a complex product.",
+            "How do you design for accessibility (WCAG standards)?",
+            "How do you handle conflicting stakeholder feedback?",
+            "Explain design tokens and how they scale across platforms.",
+        ],
+    },
+    "product-manager": {
+        "beginner": [
+            "What does a product manager do?",
+            "What is a user story?",
+            "What is the difference between a roadmap and a backlog?",
+            "What is MVP and why is it important?",
+            "How do you prioritize features?",
+        ],
+        "intermediate": [
+            "How do you write a product requirements document?",
+            "Explain the RICE scoring model.",
+            "How do you handle disagreement between engineering and stakeholders?",
+            "What metrics would you track for a new feature launch?",
+            "How do you run an effective sprint review?",
+        ],
+        "advanced": [
+            "How would you define a go-to-market strategy for a new product?",
+            "How do you balance technical debt against new feature development?",
+            "How do you make data-driven product decisions?",
+            "Describe a time you killed a feature and why.",
+            "How do you align a product vision across multiple teams?",
+        ],
+    },
+}
+
+# Fallback bucket for unknown roles
+_INTERVIEW_QUESTIONS_FALLBACK: Dict[str, List[str]] = {
+    "beginner": [
+        "Tell me about yourself and your background.",
+        "What are your strongest technical skills?",
+        "What is version control and why is it important?",
+        "What is the difference between SQL and NoSQL?",
+        "Explain what REST API means.",
+    ],
+    "intermediate": [
+        "Explain the concept of closures in programming.",
+        "What is the difference between authentication and authorization?",
+        "What is Docker and why is it used?",
+        "Explain database indexing and when to use it.",
+        "How do you ensure code quality in a team?",
+    ],
+    "advanced": [
+        "How would you design a scalable microservices architecture?",
+        "Explain CAP theorem and its implications.",
+        "What are the trade-offs between SQL and NoSQL at scale?",
+        "Explain how you would implement a RAG pipeline.",
+        "How do you handle database migrations in a live production system?",
+    ],
+}
+
+
+def _pick_interview_question(
+    role: str,
+    difficulty: str,
+    previous_questions: List[str],
+    question_number: int,
+) -> str:
+    """Pick a question from the static bank, avoiding repeats."""
+    role_key = role.lower().strip()
+    diff_key = difficulty.lower().strip()
+    if diff_key not in ("beginner", "intermediate", "advanced"):
+        diff_key = "intermediate"
+
+    role_bank = _INTERVIEW_QUESTIONS.get(role_key, {})
+    bucket: List[str] = role_bank.get(diff_key) or _INTERVIEW_QUESTIONS_FALLBACK.get(diff_key, [])
+
+    prev_set = {q.strip().lower() for q in previous_questions}
+    candidates = [q for q in bucket if q.strip().lower() not in prev_set]
+    if not candidates:
+        candidates = bucket  # all already asked — allow repeats
+
+    # Use question_number as a deterministic-but-varied seed
+    _random.seed(question_number)
+    return _random.choice(candidates) if candidates else "Tell me about your experience in this field."
+
+
+# ---------------------------------------------------------------------------
+# Interview answer evaluator (keyword-based, no LLM)
+# ---------------------------------------------------------------------------
+
+def _evaluate_answer_no_llm(question: str, answer: str, role: str, difficulty: str) -> dict:
+    """Score an interview answer using length, keyword overlap, and structure.
+
+    Returns the same shape as before:
+      { score: float(0-10), feedback: str, strengths: list, improvements: list }
+    """
+    word_count = len(answer.split())
+    answer_lower = answer.lower()
+    question_lower = question.lower()
+
+    # --- Length score (0-100) ---
+    if word_count < 20:
+        length_score = 30
+        length_fb = "Answer is very short. Aim for at least 50 words to show understanding."
+    elif word_count < 50:
+        length_score = 65
+        length_fb = "Good start. Elaborating further would strengthen your answer."
+    elif word_count < 150:
+        length_score = 85
+        length_fb = "Well-paced answer with solid detail."
+    else:
+        length_score = 100
+        length_fb = "Comprehensive answer with strong depth."
+
+    # --- Keyword overlap (0-100) ---
+    q_words = {w.strip(".,!?") for w in question_lower.split() if len(w) > 3}
+    a_words = {w.strip(".,!?") for w in answer_lower.split()}
+    overlap = len(q_words & a_words)
+    keyword_score = min(100, overlap * 12)
+
+    # --- Structure check (0-100) ---
+    example_markers = ["example", "for instance", "such as", "like", "e.g.", "specifically", "in my experience"]
+    has_example = any(m in answer_lower for m in example_markers)
+    structure_score = 100 if has_example else 55
+
+    # --- Difficulty multiplier ---
+    diff_mult = {"beginner": 1.05, "intermediate": 1.0, "advanced": 0.95}.get(difficulty.lower(), 1.0)
+
+    raw_score = (length_score * 0.40 + keyword_score * 0.40 + structure_score * 0.20) * diff_mult
+    # Scale to 0-10
+    final_score = round(min(10.0, max(0.0, raw_score / 10)), 1)
+
+    # --- Strengths and improvements ---
+    strengths: List[str] = []
+    improvements: List[str] = []
+
+    if word_count >= 50:
+        strengths.append("Detailed and well-elaborated response")
+    else:
+        improvements.append("Provide a more detailed and thorough answer")
+
+    if has_example:
+        strengths.append("Good use of concrete examples")
+    else:
+        improvements.append("Include a specific, concrete example to illustrate your point")
+
+    if overlap >= 2:
+        strengths.append("Answer is relevant and directly addresses the question")
+    else:
+        improvements.append("Make sure to directly address all parts of the question")
+
+    # Ensure non-empty lists
+    if not strengths:
+        strengths = ["You attempted the question"]
+    if not improvements:
+        improvements = ["Consider adding more depth to further impress the interviewer"]
+
+    return {
+        "score": final_score,
+        "feedback": length_fb,
+        "strengths": strengths,
+        "improvements": improvements,
+    }
 
 # ---------------------------------------------------------------------------
 # Explainability Layer (additive)
@@ -164,14 +551,18 @@ def _score_career_dna(user_skills: List[str]) -> Tuple[Dict[str, int], List[Dict
 
 
 # ---------------------------------------------------------------------------
-# RAG retrieval (Feature 5)
+# RAG retrieval — ChromaDB-first pipeline
 # ---------------------------------------------------------------------------
 _DATA_DIR = Path(__file__).resolve().parent / "data"
 _CORPUS_PATH = _DATA_DIR / "seed_corpus.json"
 _EMBEDDINGS_PATH = _DATA_DIR / "corpus_embeddings.json"
+_CHROMA_PATH = _DATA_DIR / "chromadb"
+_CHROMA_COLLECTION_NAME = "career_corpus"
+_ADVICE_PATH = _DATA_DIR / "career_advice.json"
+_ROADMAPS_PATH = _DATA_DIR / "skill_roadmaps.json"
+_ST_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
-# Hugging Face Inference Router (new API, since api-inference.huggingface.co
-# was deprecated). Both embedding and chat generation now route through here.
+# Hugging Face Inference Router (fallback when local ST model unavailable)
 HF_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 HF_URL = (
     "https://router.huggingface.co/hf-inference/models/"
@@ -179,15 +570,48 @@ HF_URL = (
 )
 _HF_TIMEOUT_SECS = 10.0
 
-# Text-generation model for /chat replies (no Gemini, pure HF + RAG).
-# Uses HF's OpenAI-compatible chat-completions router endpoint.
-# Requires an HF token with the "Make calls to Inference Providers" permission.
-# If the call fails (cold model, 401, network), we fall back to an extractive
-# templated reply built straight from the retrieved corpus sources.
+# Text-generation model for /chat replies
 HF_GEN_MODEL = "HuggingFaceH4/zephyr-7b-beta"
 HF_GEN_URL = "https://router.huggingface.co/v1/chat/completions"
 _HF_GEN_TIMEOUT_SECS = 30.0
 _EMBED_CACHE: Dict[str, List[float]] = {}
+
+# Lazy-loaded singletons (initialised on first retrieval call)
+_chroma_collection: Any = None
+_st_model: Any = None
+
+
+def _get_chroma_collection() -> Any:
+    """Return the ChromaDB collection, or None if unavailable."""
+    global _chroma_collection
+    if _chroma_collection is not None:
+        return _chroma_collection
+    if not _CHROMADB_AVAILABLE:
+        return None
+    chroma_db_dir = _CHROMA_PATH
+    if not chroma_db_dir.exists():
+        return None
+    try:
+        client = _chromadb.PersistentClient(path=str(chroma_db_dir))
+        col = client.get_collection(_CHROMA_COLLECTION_NAME)
+        _chroma_collection = col
+        return col
+    except Exception:
+        return None
+
+
+def _get_st_model() -> Any:
+    """Return a sentence-transformers model, or None if unavailable."""
+    global _st_model
+    if _st_model is not None:
+        return _st_model
+    if not _ST_AVAILABLE:
+        return None
+    try:
+        _st_model = _SentenceTransformer(_ST_MODEL_NAME)
+        return _st_model
+    except Exception:
+        return None
 
 
 def _load_corpus() -> List[Dict[str, Any]]:
@@ -211,6 +635,28 @@ def _load_embeddings() -> List[Dict[str, Any]]:
 
 _CORPUS_CACHE = _load_corpus()
 _EMBED_INDEX = _load_embeddings()
+
+
+def _load_advice() -> List[Dict[str, Any]]:
+    if not _ADVICE_PATH.exists():
+        return []
+    try:
+        return _json.loads(_ADVICE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _load_roadmaps() -> List[Dict[str, Any]]:
+    if not _ROADMAPS_PATH.exists():
+        return []
+    try:
+        return _json.loads(_ROADMAPS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+_ADVICE_CACHE: List[Dict[str, Any]] = _load_advice()
+_ROADMAPS_CACHE: List[Dict[str, Any]] = _load_roadmaps()
 
 
 def _cosine(a: List[float], b: List[float]) -> float:
@@ -310,10 +756,19 @@ def _keyword_search(query: str, k: int = 3) -> List[Dict[str, Any]]:
         return []
     scored: List[Tuple[int, Dict[str, Any]]] = []
     for item in _CORPUS_CACHE:
+        # Support both old schema (skills) and new schema (skillsRequired/relatedSkills)
+        skills_list = (
+            item.get("skillsRequired")
+            or item.get("relatedSkills")
+            or item.get("skills")
+            or []
+        )
         haystack = " ".join([
             str(item.get("title", "")),
-            " ".join(item.get("skills", [])),
+            " ".join(skills_list),
             str(item.get("description", "")),
+            str(item.get("track", "")),
+            str(item.get("company", "")),
         ]).lower()
         overlap = sum(1 for t in q_tokens if t in haystack)
         if overlap > 0:
@@ -322,21 +777,72 @@ def _keyword_search(query: str, k: int = 3) -> List[Dict[str, Any]]:
     return [item for _, item in scored[:k]]
 
 
+def _chroma_result_to_source(meta: Dict[str, Any], doc: str) -> Dict[str, Any]:
+    """Convert a ChromaDB result metadata dict into the source shape the rest of the code expects."""
+    skills_raw = meta.get("skills", "")
+    skills_list = [s.strip() for s in skills_raw.split(",")] if skills_raw else []
+    return {
+        "id": meta.get("parent_id", ""),
+        "type": meta.get("type", ""),
+        "title": meta.get("title", ""),
+        "description": doc,
+        "skills": skills_list,
+        "track": meta.get("track", ""),
+        "level": meta.get("level", ""),
+        "platform": meta.get("platform", ""),
+        "cost": meta.get("cost", ""),
+        "company": meta.get("company", ""),
+        "url": meta.get("url", ""),
+    }
+
+
 def retrieve_sources(query: str, k: int = 3) -> Tuple[List[Dict[str, Any]], str]:
     """Return (sources, path_used).
 
-    Retrieval order (per Feature 5):
-      1. cache  -> embedding cosine search
-      2. hf     -> HF Inference API + cosine over corpus_embeddings.json
-      3. keyword-> token-overlap fallback over seed_corpus.json
-      4. none   -> empty list; caller continues without retrieval
+    Retrieval order:
+      1. chromadb  -> local ChromaDB + local sentence-transformers (best quality)
+      2. cache     -> embedding cosine search (in-memory, if chroma unavailable)
+      3. hf        -> HF Inference API + cosine over corpus_embeddings.json
+      4. keyword   -> token-overlap fallback over seed_corpus.json
+      5. none      -> empty list; caller continues without retrieval
     """
     if not query:
         return [], "none"
 
+    # ── 1. ChromaDB (primary path) ──────────────────────────────────────────
+    col = _get_chroma_collection()
+    if col is not None:
+        st = _get_st_model()
+        if st is not None:
+            try:
+                qvec = st.encode([query])[0].tolist()
+                results = col.query(
+                    query_embeddings=[qvec],
+                    n_results=k,
+                    include=["metadatas", "documents"],
+                )
+                metas = results.get("metadatas", [[]])[0]
+                docs = results.get("documents", [[]])[0]
+                sources = [
+                    _chroma_result_to_source(m, d)
+                    for m, d in zip(metas, docs)
+                ]
+                # De-duplicate by parent_id (keep first/highest-ranked chunk per doc)
+                seen: set = set()
+                unique: List[Dict[str, Any]] = []
+                for s in sources:
+                    pid = s.get("id", "")
+                    if pid not in seen:
+                        seen.add(pid)
+                        unique.append(s)
+                if unique:
+                    return unique[:k], "chromadb"
+            except Exception:
+                pass  # fall through
+
     token = os.getenv("HF_TOKEN")
 
-    # Cache check (only meaningful if embeddings exist)
+    # ── 2. Cache check ───────────────────────────────────────────────────────
     if _EMBED_INDEX and query in _EMBED_CACHE:
         qvec = _EMBED_CACHE[query]
         ranked = sorted(
@@ -346,7 +852,7 @@ def retrieve_sources(query: str, k: int = 3) -> Tuple[List[Dict[str, Any]], str]
         )
         return ranked[:k], "cache"
 
-    # HF retrieval — only attempt if we have both a token AND a local index
+    # ── 3. HF retrieval ──────────────────────────────────────────────────────
     if token and _EMBED_INDEX:
         try:
             qvec = _hf_embed(query, token)
@@ -360,7 +866,7 @@ def retrieve_sources(query: str, k: int = 3) -> Tuple[List[Dict[str, Any]], str]
         except Exception:
             pass  # fall through to keyword
 
-    # Keyword fallback
+    # ── 4. Keyword fallback ──────────────────────────────────────────────────
     kw = _keyword_search(query, k=k)
     if kw:
         return kw, "keyword"
@@ -380,19 +886,12 @@ def _sources_to_factors(sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Fallback test — REQUIRED by Feature 5 brief.
-# Test result (verified at implementation time):
-#   * When HF_TOKEN is unset OR HF endpoint raises, retrieve_sources()
-#     returns the keyword path with >= 1 source for queries that mention
-#     any corpus skill/title token.
-#   * _build_envelope() correctly tags confidence as "Medium" when
-#     used_fallback=True, even with 3+ factors.
-#   * /chat continues and still calls Gemini even when retrieval returns
-#     an empty list (no exception surfaced to the user).
-# Manual repro:
-#   >>> os.environ.pop("HF_TOKEN", None)
-#   >>> retrieve_sources("python fastapi docker backend", k=3)
-#   (>=1 sources, 'keyword')
+# Retrieval path notes:
+#   1. chromadb  — local ChromaDB + sentence-transformers (fastest, best quality)
+#   2. cache     — in-memory cosine over corpus_embeddings.json
+#   3. hf        — HF Inference API (requires HF_TOKEN)
+#   4. keyword   — token-overlap fallback (always works, no deps)
+#   5. none      — empty; caller produces templated reply
 # ---------------------------------------------------------------------------
 
 # Simple type hints to avoid a runtime dependency on pydantic
@@ -409,7 +908,7 @@ class InterviewQuestionRequest(BaseModel):
     role: str = Field(..., max_length=64)
     difficulty: str = Field(..., max_length=32)
     questionNumber: int = Field(..., ge=0, le=200)
-    # Cap previous-questions list to avoid Gemini token explosion
+    # Cap previous-questions list to avoid token explosion
     previousQuestions: list[str] = Field(default_factory=list, max_length=50)
 
 class InterviewAnswerRequest(BaseModel):
@@ -438,7 +937,7 @@ async def options_chat():
 
 @app.post("/chat")
 async def chat(req: Dict[str, Any]):
-    """Pure HF + RAG chatbot. No Gemini.
+    """Pure HF + RAG chatbot.
 
     Pipeline:
       1. HF retrieval (cache → HF embeddings → keyword fallback)
@@ -599,63 +1098,12 @@ async def summarize_cv(file: UploadFile = File(...)):
         if not full_text.strip():
             raise HTTPException(status_code=400, detail="No text found in PDF.")
         
-        # Call Gemini to analyze the CV
-        prompt = (
-            "You are an expert CV analyzer. Extract and list ONLY the following from this CV in a structured JSON format:\n\n"
-            "Return ONLY a valid JSON object with these exact keys:\n"
-            "{\n"
-            '  "keySkills": ["skill1", "skill2", ...],\n'
-            '  "toolsTechnologies": ["tool1", "tool2", ...],\n'
-            '  "rolesAndDomains": ["role/domain1", "role/domain2", ...]\n'
-            "}\n\n"
-            "Instructions:\n"
-            "- keySkills: List all technical and soft skills (e.g., Python, Communication, Problem Solving)\n"
-            "- toolsTechnologies: List all programming languages, frameworks, software, platforms (e.g., React, Docker, AWS)\n"
-            "- rolesAndDomains: List job titles AND industry domains (e.g., Software Engineer, Web Development, Healthcare)\n"
-            "- Extract only what is explicitly mentioned in the CV\n"
-            "- Return ONLY the JSON object, no additional text\n\n"
-            "CV Content:\n\n" + full_text
-        )
-        
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-        )
-        
-        # Extract summary text from response
-        summary = ""
-        if response.candidates and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                summary = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
-        
-        if not summary:
-            summary = "Unable to generate summary. Please try again."
-        
-        # Try to parse as JSON, if it fails return as text
-        import json
-        try:
-            # Clean markdown code blocks if present
-            cleaned_summary = summary.strip()
-            if cleaned_summary.startswith("```json"):
-                cleaned_summary = cleaned_summary[7:]
-            if cleaned_summary.startswith("```"):
-                cleaned_summary = cleaned_summary[3:]
-            if cleaned_summary.endswith("```"):
-                cleaned_summary = cleaned_summary[:-3]
-            cleaned_summary = cleaned_summary.strip()
-            
-            parsed_data = json.loads(cleaned_summary)
-            return {
-                "data": parsed_data,
-                "raw_text": full_text
-            }
-        except json.JSONDecodeError:
-            # If JSON parsing fails, return as text
-            return {
-                "data": {"summary": summary},
-                "raw_text": full_text
-            }
+        # Extract CV data using pure keyword matching (no LLM)
+        parsed_data = _summarize_cv_no_llm(full_text)
+        return {
+            "data": parsed_data,
+            "raw_text": full_text
+        }
     
     except HTTPException:
         raise
@@ -684,51 +1132,14 @@ async def generate_interview_question(req: InterviewQuestionRequest):
         
         role_name = role_names.get(req.role, req.role)
         
-        # Build previous questions context to avoid duplicates
-        previous_context = ""
-        if req.previousQuestions and len(req.previousQuestions) > 0:
-            previous_context = "\n\nPreviously asked questions (DO NOT repeat these):\n"
-            for i, prev_q in enumerate(req.previousQuestions, 1):
-                previous_context += f"{i}. {prev_q}\n"
-        
-        # Create prompt for interview question
-        prompt = f"""You are an experienced technical interviewer conducting a {req.difficulty} level interview for a {role_name} position.
-
-Generate a single, NEW and UNIQUE interview question (Question #{req.questionNumber}) that:
-- Is appropriate for {req.difficulty} level candidates
-- Tests practical knowledge and problem-solving skills
-- Is clear and specific
-- Would be commonly asked in real {role_name} interviews
-- Is COMPLETELY DIFFERENT from any previously asked questions
-
-Difficulty guidelines:
-- Beginner: Basic concepts, syntax, fundamental principles (e.g., "What is a variable?", "Explain HTML tags")
-- Intermediate: Practical experience, common scenarios, best practices (e.g., "How do you handle API errors?", "Explain state management")
-- Advanced: System design, architecture, complex problem-solving, trade-offs (e.g., "Design a scalable chat system", "Explain microservices architecture")
-
-IMPORTANT: 
-- Generate a DIFFERENT question each time
-- Maintain the {req.difficulty} difficulty level consistently
-- Avoid repeating topics from previous questions
-- Provide variety in question types (conceptual, practical, scenario-based){previous_context}
-
-Return ONLY the interview question text, no additional formatting or labels."""
-
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
+        # Pick a question from the static bank (no LLM)
+        question_text = _pick_interview_question(
+            role=req.role,
+            difficulty=req.difficulty,
+            previous_questions=req.previousQuestions,
+            question_number=req.questionNumber,
         )
-        
-        question_text = ""
-        if response.candidates and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                question_text = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
-        
-        if not question_text:
-            question_text = "What interests you about this role and what relevant experience do you have?"
-        
-        return InterviewQuestionResponse(question=question_text.strip())
+        return InterviewQuestionResponse(question=question_text)
     
     except Exception as e:
         error_message = f"Error generating interview question: {str(e)}"
@@ -741,80 +1152,19 @@ async def options_evaluate_answer():
 @app.post("/evaluate-interview-answer", response_model=InterviewFeedbackResponse)
 async def evaluate_interview_answer(req: InterviewAnswerRequest):
     try:
-        # Create prompt for evaluation
-        prompt = f"""You are an experienced technical interviewer evaluating a candidate's answer.
-
-Interview Question: {req.question}
-
-Candidate's Answer: {req.answer}
-
-Job Role: {req.role}
-Difficulty Level: {req.difficulty}
-
-Evaluate this answer and provide:
-1. A score from 0-10 (be realistic and fair)
-2. Overall feedback (2-3 sentences)
-3. 2-3 specific strengths in the answer
-4. 2-3 specific areas for improvement
-
-Return your evaluation in this EXACT JSON format:
-{{
-    "score": <number between 0-10>,
-    "feedback": "<overall feedback>",
-    "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
-    "improvements": ["<improvement 1>", "<improvement 2>", "<improvement 3>"]
-}}
-
-Scoring guidelines:
-- 9-10: Exceptional answer with deep understanding
-- 7-8: Strong answer with good knowledge
-- 5-6: Adequate answer with room for improvement
-- 3-4: Weak answer with significant gaps
-- 0-2: Poor answer with fundamental misunderstandings
-
-Return ONLY the JSON object, no additional text."""
-
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
+        # Evaluate using keyword-based scoring (no LLM)
+        result = _evaluate_answer_no_llm(
+            question=req.question,
+            answer=req.answer,
+            role=req.role,
+            difficulty=req.difficulty,
         )
-        
-        feedback_text = ""
-        if response.candidates and len(response.candidates) > 0:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                feedback_text = "".join(part.text for part in candidate.content.parts if hasattr(part, 'text'))
-        
-        # Parse JSON response
-        import json
-        try:
-            # Clean markdown code blocks if present
-            cleaned_feedback = feedback_text.strip()
-            if cleaned_feedback.startswith("```json"):
-                cleaned_feedback = cleaned_feedback[7:]
-            if cleaned_feedback.startswith("```"):
-                cleaned_feedback = cleaned_feedback[3:]
-            if cleaned_feedback.endswith("```"):
-                cleaned_feedback = cleaned_feedback[:-3]
-            cleaned_feedback = cleaned_feedback.strip()
-            
-            parsed_data = json.loads(cleaned_feedback)
-            
-            return InterviewFeedbackResponse(
-                score=float(parsed_data.get("score", 5)),
-                feedback=parsed_data.get("feedback", "Thank you for your answer."),
-                strengths=parsed_data.get("strengths", ["You provided an answer"]),
-                improvements=parsed_data.get("improvements", ["Consider providing more details"])
-            )
-        except (json.JSONDecodeError, KeyError, ValueError):
-            # Fallback if JSON parsing fails
-            return InterviewFeedbackResponse(
-                score=5.0,
-                feedback="Thank you for your answer. " + feedback_text[:200],
-                strengths=["You attempted the question"],
-                improvements=["Consider structuring your answer better", "Provide more specific examples"]
-            )
-    
+        return InterviewFeedbackResponse(
+            score=result["score"],
+            feedback=result["feedback"],
+            strengths=result["strengths"],
+            improvements=result["improvements"],
+        )
     except Exception as e:
         error_message = f"Error evaluating answer: {str(e)}"
         raise HTTPException(status_code=500, detail=error_message)
@@ -1023,6 +1373,106 @@ async def explain_match(req: Dict[str, Any]):
     envelope = _build_envelope(score, factors, basis)
     envelope["score"] = score
     return envelope
+
+
+# ---------------------------------------------------------------------------
+# Feature 5 — Career Advice Q&A
+# ---------------------------------------------------------------------------
+@app.options("/career-advice")
+async def options_career_advice():
+    return {"message": "OK"}
+
+
+@app.get("/career-advice")
+async def career_advice(q: str = "", tag: str = "", limit: int = 5):
+    """Return matching career advice items.
+
+    Query params:
+      q     - free-text keyword search against question + answer + tags
+      tag   - filter by a specific tag (exact match, case-insensitive)
+      limit - max results (default 5, max 20)
+    """
+    limit = max(1, min(limit, 20))
+    items = _ADVICE_CACHE
+    if not items:
+        raise HTTPException(status_code=503, detail="Career advice data not loaded.")
+
+    results = []
+    q_lower = (q or "").lower().strip()
+    tag_lower = (tag or "").lower().strip()
+
+    for item in items:
+        # Tag filter
+        if tag_lower:
+            item_tags = [t.lower() for t in item.get("tags", [])]
+            if tag_lower not in item_tags:
+                continue
+        # Keyword filter
+        if q_lower:
+            haystack = " ".join([
+                item.get("question", ""),
+                item.get("answer", ""),
+                " ".join(item.get("tags", [])),
+                " ".join(item.get("related_skills", [])),
+            ]).lower()
+            if not any(token in haystack for token in q_lower.split() if len(token) > 2):
+                continue
+        results.append(item)
+        if len(results) >= limit:
+            break
+
+    return {
+        "items": results,
+        "total": len(results),
+        "query": q,
+        "tag": tag,
+    }
+
+
+@app.post("/career-advice")
+async def career_advice_post(req: Dict[str, Any]):
+    """POST alias for /career-advice — accepts {q, tag, limit} JSON body."""
+    q = req.get("q", "")
+    tag = req.get("tag", "")
+    limit = int(req.get("limit", 5))
+    return await career_advice(q=q, tag=tag, limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# Feature 6 — Skill Roadmaps
+# ---------------------------------------------------------------------------
+@app.options("/skill-roadmap")
+async def options_skill_roadmap():
+    return {"message": "OK"}
+
+
+@app.get("/skill-roadmap")
+async def skill_roadmap(track: str = ""):
+    """Return skill roadmaps, optionally filtered by track.
+
+    Query params:
+      track - filter by career track (e.g. Frontend, Backend, DevOps, AI/ML, Communication)
+    """
+    items = _ROADMAPS_CACHE
+    if not items:
+        raise HTTPException(status_code=503, detail="Skill roadmap data not loaded.")
+
+    if track:
+        track_lower = track.lower()
+        items = [r for r in items if track_lower in r.get("track", "").lower()]
+
+    return {
+        "roadmaps": items,
+        "total": len(items),
+        "track_filter": track,
+    }
+
+
+@app.post("/skill-roadmap")
+async def skill_roadmap_post(req: Dict[str, Any]):
+    """POST alias for /skill-roadmap — accepts {track} JSON body."""
+    track = req.get("track", "")
+    return await skill_roadmap(track=track)
 
 
 if __name__ == "__main__":

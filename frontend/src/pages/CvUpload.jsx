@@ -5,6 +5,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { doc, updateDoc, getDoc, arrayUnion } from "firebase/firestore";
 import { db } from "../firebase";
 import toast from "react-hot-toast";
+import API_URL from "../config";
 
 export default function CvUpload() {
   const { currentUser } = useAuth();
@@ -104,7 +105,7 @@ Keep it SHORT and concise.`;
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      const apiUrl = (import.meta.env.VITE_API_URL || "https://backendcareerpath.vercel.app").replace(/\/+$/, "");
+      const apiUrl = API_URL.replace(/\/+$/, "");
       const res = await fetch(`${apiUrl}/summarize-cv`, {
         method: "POST",
         body: formData,

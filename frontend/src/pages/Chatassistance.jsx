@@ -7,6 +7,7 @@ import { collection, doc, setDoc, getDoc, updateDoc, arrayUnion, serverTimestamp
 import toast from "react-hot-toast";
 import ReactMarkdown from "react-markdown";
 import ReasoningCard from "../components/ReasoningCard";
+import API_URL from "../config";
 
 export default function Chatassistance() {
   const { currentUser } = useAuth();
@@ -239,7 +240,7 @@ export default function Chatassistance() {
       }));
 
       // Call backend API
-      const apiUrl = (import.meta.env.VITE_API_URL || "https://backendcareerpath.vercel.app").replace(/\/+$/, "");
+      const apiUrl = API_URL.replace(/\/+$/, "");
       const res = await fetch(`${apiUrl}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

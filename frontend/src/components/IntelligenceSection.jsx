@@ -25,6 +25,7 @@ import { motion } from 'framer-motion';
 import { Sparkles, Gauge } from 'lucide-react';
 import ReasoningCard from './ReasoningCard';
 import MindsparksCredential from './MindsparksCredential';
+import API_URL from '../config';
 
 ChartJS.register(
   RadialLinearScale,
@@ -35,7 +36,7 @@ ChartJS.register(
   Legend
 );
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/+$/, '');
+const API_BASE = API_URL.replace(/\/+$/, '');
 
 export default function IntelligenceSection({
   skills,

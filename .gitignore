@@ -40,3 +40,4 @@ logs
 .cache
 __pycache__/
 *.py[cod]
+frontend/public/corpus.json

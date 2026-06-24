@@ -7,11 +7,17 @@ services:
     ports:
       - "8000:8000"
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      USE_LOCAL_EMBEDDINGS: "true"
+      CHROMA_HOST: "chroma"
+      CHROMA_PORT: "8000"
+    depends_on:
+      - chroma
     # Backend no longer performs any AI inference — frontend calls Hugging
     # Face directly. No env vars required for AI routes.
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:7860/"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -34,3 +40,14 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
+
+  chroma:
+    image: chromadb/chroma:latest
+    ports:
+      - "8001:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: unless-stopped
+
+volumes:
+  chroma_data:

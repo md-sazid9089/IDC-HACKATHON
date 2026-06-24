@@ -38,13 +38,183 @@ import {
 import { db } from '../firebase';
 import ReasoningCard from '../components/ReasoningCard';
 import { buildEnvelope } from '../utils/explainability';
-import FaceExpressionOverlay from '../components/FaceExpressionOverlay';
+import FaceExpressionOverlay, { getExpressionCoaching } from '../components/FaceExpressionOverlay';
 import { indexProfile } from '../services/ragPipeline';
 import { loadCorpus } from '../services/corpusLoader';
 import {
   generateInterviewQuestion,
   evaluateInterviewAnswer,
 } from '../services/interviewAI';
+
+// ── CHANGE 3: Voice coaching pure function ──────────────────────────────────
+function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
+  /*
+   WPM good range: 110-160
+   Filler words good: <= 3
+   Pause time good: <= 6s
+   Returns array of coaching objects
+  */
+  const coaching = [];
+
+  // WPM coaching
+  if (wpm < 80) {
+    coaching.push({
+      icon: '🐢',
+      priority: 'high',
+      metric: 'Speaking Rate',
+      current: `${wpm} WPM`,
+      target: '110–160 WPM',
+      tip: `You are speaking too slowly at ${wpm} WPM. Increase your pace — slow speech can signal low confidence to interviewers.`,
+    });
+  } else if (wpm < 110) {
+    coaching.push({
+      icon: '⚡',
+      priority: 'medium',
+      metric: 'Speaking Rate',
+      current: `${wpm} WPM`,
+      target: '110–160 WPM',
+      tip: `Your pace at ${wpm} WPM is slightly slow. Aim for 110–160 WPM to sound more energetic and confident.`,
+    });
+  } else if (wpm > 180) {
+    coaching.push({
+      icon: '🐇',
+      priority: 'high',
+      metric: 'Speaking Rate',
+      current: `${wpm} WPM`,
+      target: '110–160 WPM',
+      tip: `You are speaking too fast at ${wpm} WPM. Slow down so the interviewer can absorb your answer clearly.`,
+    });
+  } else if (wpm > 160) {
+    coaching.push({
+      icon: '😮💨',
+      priority: 'medium',
+      metric: 'Speaking Rate',
+      current: `${wpm} WPM`,
+      target: '110–160 WPM',
+      tip: `Your pace at ${wpm} WPM is slightly fast. Take brief pauses between points to let your answer land.`,
+    });
+  } else {
+    coaching.push({
+      icon: '✅',
+      priority: 'good',
+      metric: 'Speaking Rate',
+      current: `${wpm} WPM`,
+      target: '110–160 WPM',
+      tip: `Great speaking pace at ${wpm} WPM — clear and confident.`,
+    });
+  }
+
+  // Filler word coaching
+  if (fillerCount > 8) {
+    coaching.push({
+      icon: '🚫',
+      priority: 'high',
+      metric: 'Filler Words',
+      current: `${fillerCount} fillers`,
+      target: '3 or fewer',
+      tip: `You used ${fillerCount} filler words (um, uh, like, basically). Replace them with a 1-second pause — silence sounds far more confident than fillers.`,
+    });
+  } else if (fillerCount > 3) {
+    coaching.push({
+      icon: '⚠️',
+      priority: 'medium',
+      metric: 'Filler Words',
+      current: `${fillerCount} fillers`,
+      target: '3 or fewer',
+      tip: `${fillerCount} filler words detected. Practice pausing silently instead of saying "um" or "uh" while you think.`,
+    });
+  } else {
+    coaching.push({
+      icon: '✅',
+      priority: 'good',
+      metric: 'Filler Words',
+      current: `${fillerCount} fillers`,
+      target: '3 or fewer',
+      tip: `Excellent — only ${fillerCount} filler words. Clean, professional speech.`,
+    });
+  }
+
+  // Pause coaching
+  if (pauseSeconds > 10) {
+    coaching.push({
+      icon: '⏸️',
+      priority: 'high',
+      metric: 'Pause Time',
+      current: `${pauseSeconds}s paused`,
+      target: 'Under 6s total',
+      tip: `${pauseSeconds}s of silence detected. Long pauses suggest uncertainty. Structure your answer using STAR method before speaking.`,
+    });
+  } else if (pauseSeconds > 6) {
+    coaching.push({
+      icon: '⏳',
+      priority: 'medium',
+      metric: 'Pause Time',
+      current: `${pauseSeconds}s paused`,
+      target: 'Under 6s total',
+      tip: `${pauseSeconds}s of pausing. Slightly high — brief pauses are fine but try to answer more fluidly.`,
+    });
+  } else {
+    coaching.push({
+      icon: '✅',
+      priority: 'good',
+      metric: 'Pause Time',
+      current: `${pauseSeconds}s paused`,
+      target: 'Under 6s total',
+      tip: `Good flow — only ${pauseSeconds}s of total pausing.`,
+    });
+  }
+
+  return coaching;
+}
+
+// ── CHANGE 4: Overall coaching summary pure function ─────────────────────────
+function getOverallCoachingSummary(wpm, fillerCount, pauseSeconds, emotions) {
+  const issues = [];
+  const strengths = [];
+
+  // Voice issues
+  if (wpm < 110) issues.push('Increase speaking speed to 110–160 WPM');
+  if (wpm > 160) issues.push('Slow down your speaking pace');
+  if (fillerCount > 3) issues.push(`Reduce filler words — used ${fillerCount}`);
+  if (pauseSeconds > 6) issues.push('Minimize long pauses between sentences');
+
+  // Expression issues
+  if (emotions) {
+    const negPct = (emotions.sad || 0) + (emotions.fear || 0) + (emotions.angry || 0);
+    if (negPct > 50) issues.push('Work on maintaining a calm confident expression');
+    if ((emotions.fear || 0) > 25) issues.push('Practice to reduce visible nervousness');
+    if ((emotions.happy || 0) > 30) strengths.push('Good positive energy in your expression');
+  }
+
+  // Voice strengths
+  if (wpm >= 110 && wpm <= 160) strengths.push('Speaking pace is perfect');
+  if (fillerCount <= 3) strengths.push('Clean speech with minimal filler words');
+  if (pauseSeconds <= 6) strengths.push('Good answer fluency with minimal pausing');
+
+  // Overall score 0-100
+  let score = 100;
+  if (wpm < 80 || wpm > 180) score -= 25;
+  else if (wpm < 110 || wpm > 160) score -= 10;
+  if (fillerCount > 8) score -= 20;
+  else if (fillerCount > 3) score -= 10;
+  if (pauseSeconds > 10) score -= 20;
+  else if (pauseSeconds > 6) score -= 10;
+  if (emotions) {
+    const negPct = (emotions.sad || 0) + (emotions.fear || 0) + (emotions.angry || 0);
+    if (negPct > 60) score -= 25;
+    else if (negPct > 40) score -= 10;
+  }
+  score = Math.max(0, Math.min(100, score));
+
+  let grade = '';
+  let gradeColor = '';
+  if (score >= 80) { grade = 'Excellent'; gradeColor = 'text-green-400'; }
+  else if (score >= 60) { grade = 'Good'; gradeColor = 'text-primary'; }
+  else if (score >= 40) { grade = 'Needs Work'; gradeColor = 'text-yellow-400'; }
+  else { grade = 'Keep Practicing'; gradeColor = 'text-red-400'; }
+
+  return { score, grade, gradeColor, issues, strengths };
+}
 
 const MockInterview = () => {
   const { currentUser } = useAuth();
@@ -82,11 +252,34 @@ const MockInterview = () => {
   const faceOverlayRef = useRef(null);
   const [emotionSummary, setEmotionSummary] = useState(null);
 
+  // ── CHANGE 5: New coaching state ────────────────────────────────────────
+  const [voiceCoaching, setVoiceCoaching] = useState([]);
+  const [expressionCoaching, setExpressionCoaching] = useState([]);
+  const [coachingSummary, setCoachingSummary] = useState(null);
+  const [interviewEnded, setInterviewEnded] = useState(false);
+  // Live emotions distribution accumulated from FaceExpressionOverlay updates
+  const liveEmotionsRef = useRef(null);
+
   // Detect SpeechRecognition support once on mount (silent fallback).
   useEffect(() => {
     const SR = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
     setVoiceSupported(!!SR);
   }, []);
+
+  // ── CHANGE 5: Compute overall coaching summary when interview ends ──────────
+  useEffect(() => {
+    if (!interviewEnded) return;
+    // Extract raw metrics from the latest metricsEnvelope factors
+    const wpmFactor    = metricsEnvelope?.factors?.find(f => f.label?.includes('Speaking rate'));
+    const fillerFactor = metricsEnvelope?.factors?.find(f => f.label?.includes('Filler words'));
+    const pauseFactor  = metricsEnvelope?.factors?.find(f => f.label?.includes('pause time'));
+    const wpm       = wpmFactor?.value    ?? 0;
+    const fillers   = fillerFactor?.value ?? 0;
+    const pauseSecs = pauseFactor?.value  ?? 0;
+    const emotions  = liveEmotionsRef.current;
+    setCoachingSummary(getOverallCoachingSummary(wpm, fillers, pauseSecs, emotions));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interviewEnded]);
 
   const jobRoles = [
     { value: 'frontend', label: 'Frontend Developer', icon: '💻' },
@@ -177,6 +370,16 @@ const MockInterview = () => {
       try {
         const env = computeMetricsEnvelope(userAnswer);
         setMetricsEnvelope(env);
+        // ── CHANGE 5: Compute voice coaching from envelope factors ──
+        if (env && env.factors) {
+          const wpmFactor    = env.factors.find(f => f.label && f.label.includes('Speaking rate'));
+          const fillerFactor = env.factors.find(f => f.label && f.label.includes('Filler words'));
+          const pauseFactor  = env.factors.find(f => f.label && f.label.includes('pause time'));
+          const wpm    = wpmFactor?.value    ?? 0;
+          const fillers = fillerFactor?.value ?? 0;
+          const pauseSecs = pauseFactor?.value ?? 0;
+          setVoiceCoaching(getVoiceCoaching(wpm, fillers, pauseSecs));
+        }
       } catch {
         setMetricsEnvelope(null);
       }
@@ -221,6 +424,12 @@ const MockInterview = () => {
     setSessionFeedbacks([]); // Reset feedbacks
     setEmotionSummary(null);
     setMetricsEnvelope(null);
+    // ── CHANGE 5: Clear coaching state on restart ──
+    setVoiceCoaching([]);
+    setExpressionCoaching([]);
+    setCoachingSummary(null);
+    setInterviewEnded(false);
+    liveEmotionsRef.current = null;
 
     // Fire-and-forget corpus load (cached after first run).
     loadCorpus().catch(() => { /* non-blocking */ });
@@ -249,7 +458,14 @@ const MockInterview = () => {
   // End interview and save to history
   const endInterview = useCallback(async () => {
     const summary = faceOverlayRef.current?.finalize();
-    if (summary) setEmotionSummary(summary);
+    if (summary) {
+      setEmotionSummary(summary);
+      // ── CHANGE 5: Compute expression coaching from finalized summary ──
+      const coaching = getExpressionCoaching(summary.distribution);
+      setExpressionCoaching(coaching);
+      // Store latest emotions for coaching summary
+      liveEmotionsRef.current = summary.distribution;
+    }
     try {
       const avgScore = sessionScore / Math.max(questionNumber + 1, 1);
       const totalQuestions = questionNumber + 1;
@@ -292,6 +508,7 @@ const MockInterview = () => {
 
       toast.success(`Interview completed! Average score: ${avgScore.toFixed(1)}/10`);
       setInterviewStarted(false);
+      setInterviewEnded(true);
       setCurrentQuestion(null);
       setUserAnswer('');
       setFeedback(null);
@@ -631,8 +848,127 @@ const MockInterview = () => {
                     {emotionSummary.totalFrames} frames sampled
                   </p>
                 </div>
+
+                {/* ── CHANGE 2: Expression Coaching on setup screen ── */}
+                {expressionCoaching.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[#B3B3C7] text-xs font-semibold uppercase tracking-wide">
+                      Expression Coaching
+                    </p>
+                    {expressionCoaching.map((item, i) => (
+                      <div
+                        key={i}
+                        className={`flex items-start gap-3 p-3 rounded-lg border ${
+                          item.priority === 'high'
+                            ? 'border-red-500/30 bg-red-500/10'
+                            : item.priority === 'good'
+                            ? 'border-green-500/30 bg-green-500/10'
+                            : 'border-yellow-500/30 bg-yellow-500/10'
+                        }`}
+                      >
+                        <span className="text-lg">{item.icon}</span>
+                        <p className="text-sm text-white leading-relaxed">{item.tip}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* ── CHANGE 3: Voice Coaching on setup screen ── */}
+                {voiceCoaching.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-[#B3B3C7] text-xs font-semibold uppercase tracking-wide">
+                      Voice Coaching
+                    </p>
+                    {voiceCoaching.map((item, i) => (
+                      <div
+                        key={i}
+                        className={`neon-card p-4 rounded-xl border ${
+                          item.priority === 'high'
+                            ? 'border-red-500/40'
+                            : item.priority === 'good'
+                            ? 'border-green-500/40'
+                            : 'border-yellow-500/40'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-base">{item.icon}</span>
+                          <span className="text-sm font-semibold text-white">
+                            {item.metric}
+                          </span>
+                          <span className="ml-auto text-xs text-[#B3B3C7]">
+                            {item.current} · target {item.target}
+                          </span>
+                        </div>
+                        <p className="text-sm text-[#B3B3C7] leading-relaxed">
+                          {item.tip}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* ── CHANGE 4: Overall Coaching Summary on setup screen ── */}
+                {interviewEnded && coachingSummary && (
+                  <div className="neon-card p-6 rounded-2xl border border-primary/30">
+                    <h3 className="text-lg font-semibold text-white mb-4">
+                      🎯 Interview Coaching Summary
+                    </h3>
+                    <div className="flex items-center gap-4 mb-6">
+                      <div className="relative w-20 h-20 flex-shrink-0">
+                        <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                          <circle cx="18" cy="18" r="15.9"
+                            fill="none" stroke="#11152B" strokeWidth="3" />
+                          <circle cx="18" cy="18" r="15.9"
+                            fill="none" stroke="#A855F7" strokeWidth="3"
+                            strokeDasharray={`${coachingSummary.score} 100`}
+                            strokeLinecap="round" />
+                        </svg>
+                        <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-white">
+                          {coachingSummary.score}
+                        </span>
+                      </div>
+                      <div>
+                        <p className={`text-2xl font-bold ${coachingSummary.gradeColor}`}>
+                          {coachingSummary.grade}
+                        </p>
+                        <p className="text-[#B3B3C7] text-sm">Overall interview performance</p>
+                      </div>
+                    </div>
+                    {coachingSummary.issues.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs font-semibold text-red-400 mb-2 uppercase tracking-wide">
+                          🔧 Areas to Improve
+                        </p>
+                        <ul className="space-y-1">
+                          {coachingSummary.issues.map((issue, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm text-[#B3B3C7]">
+                              <span className="text-red-400 mt-0.5">→</span>
+                              {issue}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {coachingSummary.strengths.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-green-400 mb-2 uppercase tracking-wide">
+                          ✨ Your Strengths
+                        </p>
+                        <ul className="space-y-1">
+                          {coachingSummary.strengths.map((s, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm text-[#B3B3C7]">
+                              <span className="text-green-400 mt-0.5">✓</span>
+                              {s}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
+
 
             {/* Role Selection */}
             <motion.div
@@ -1011,17 +1347,147 @@ const MockInterview = () => {
                         </p>
                       </div>
                     )}
+
+                    {/* ── CHANGE 2: Expression Coaching — additive below existing chart ── */}
+                    {expressionCoaching.length > 0 && (
+                      <div className="mt-4 space-y-2">
+                        <p className="text-[#B3B3C7] text-xs font-semibold uppercase tracking-wide">
+                          Expression Coaching
+                        </p>
+                        {expressionCoaching.map((item, i) => (
+                          <div
+                            key={i}
+                            className={`flex items-start gap-3 p-3 rounded-lg border ${
+                              item.priority === 'high'
+                                ? 'border-red-500/30 bg-red-500/10'
+                                : item.priority === 'good'
+                                ? 'border-green-500/30 bg-green-500/10'
+                                : 'border-yellow-500/30 bg-yellow-500/10'
+                            }`}
+                          >
+                            <span className="text-lg">{item.icon}</span>
+                            <p className="text-sm text-white leading-relaxed">{item.tip}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ── CHANGE 3: Voice Coaching Cards — additive below existing ReasoningCard ── */}
+                    {voiceCoaching.length > 0 && (
+                      <div className="mt-4 space-y-2">
+                        <p className="text-[#B3B3C7] text-xs font-semibold uppercase tracking-wide">
+                          Voice Coaching
+                        </p>
+                        {voiceCoaching.map((item, i) => (
+                          <div
+                            key={i}
+                            className={`neon-card p-4 rounded-xl border ${
+                              item.priority === 'high'
+                                ? 'border-red-500/40'
+                                : item.priority === 'good'
+                                ? 'border-green-500/40'
+                                : 'border-yellow-500/40'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-base">{item.icon}</span>
+                              <span className="text-sm font-semibold text-white">
+                                {item.metric}
+                              </span>
+                              <span className="ml-auto text-xs text-[#B3B3C7]">
+                                {item.current} · target {item.target}
+                              </span>
+                            </div>
+                            <p className="text-sm text-[#B3B3C7] leading-relaxed">
+                              {item.tip}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/* ── CHANGE 4: Overall Coaching Summary — shown after interview ends ── */}
+              {interviewEnded && coachingSummary && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="neon-card p-6 rounded-2xl border border-primary/30"
+                >
+                  <h3 className="text-lg font-semibold text-white mb-4">
+                    🎯 Interview Coaching Summary
+                  </h3>
+
+                  {/* Score ring */}
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="relative w-20 h-20 flex-shrink-0">
+                      <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                        <circle cx="18" cy="18" r="15.9"
+                          fill="none" stroke="#11152B" strokeWidth="3" />
+                        <circle cx="18" cy="18" r="15.9"
+                          fill="none" stroke="#A855F7" strokeWidth="3"
+                          strokeDasharray={`${coachingSummary.score} 100`}
+                          strokeLinecap="round" />
+                      </svg>
+                      <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-white">
+                        {coachingSummary.score}
+                      </span>
+                    </div>
+                    <div>
+                      <p className={`text-2xl font-bold ${coachingSummary.gradeColor}`}>
+                        {coachingSummary.grade}
+                      </p>
+                      <p className="text-[#B3B3C7] text-sm">Overall interview performance</p>
+                    </div>
+                  </div>
+
+                  {/* Areas to improve */}
+                  {coachingSummary.issues.length > 0 && (
+                    <div className="mb-4">
+                      <p className="text-xs font-semibold text-red-400 mb-2 uppercase tracking-wide">
+                        🔧 Areas to Improve
+                      </p>
+                      <ul className="space-y-1">
+                        {coachingSummary.issues.map((issue, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-[#B3B3C7]">
+                            <span className="text-red-400 mt-0.5">→</span>
+                            {issue}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Strengths */}
+                  {coachingSummary.strengths.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-green-400 mb-2 uppercase tracking-wide">
+                        ✨ Your Strengths
+                      </p>
+                      <ul className="space-y-1">
+                        {coachingSummary.strengths.map((s, i) => (
+                          <li key={i} className="flex items-start gap-2 text-sm text-[#B3B3C7]">
+                            <span className="text-green-400 mt-0.5">✓</span>
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </motion.div>
+              )}
             </div>
 
             {/* Session Info Panel */}
             <div className="space-y-6">
               {/* Face Expression Overlay — live webcam + emotion detection */}
+              {/* ── CHANGE 5: onCoachingUpdate keeps live emotion distribution in sync ── */}
               <FaceExpressionOverlay
                 ref={faceOverlayRef}
                 active={interviewStarted}
+                onCoachingUpdate={(dist) => { liveEmotionsRef.current = dist; }}
               />
 
               <motion.div

@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Sparkles, Bot, User, AlertCircle, Trash2 } from "lucide-react";
+import { Send, Sparkles, Bot, User, Trash2 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { db } from "../firebase";
 import { collection, doc, setDoc, getDoc, updateDoc, arrayUnion, serverTimestamp } from "firebase/firestore";
 import toast from "react-hot-toast";
 import ReactMarkdown from "react-markdown";
 import ReasoningCard from "../components/ReasoningCard";
-import { careerChat } from "../services/interviewAI";
+import API_URL from "../config";
 import { loadCorpus } from "../services/corpusLoader";
 import { indexProfile } from "../services/ragPipeline";
 
@@ -24,23 +24,6 @@ export default function Chatassistance() {
   const [isSaving, setIsSaving] = useState(false);
   const chatBoxRef = useRef(null);
   const abortRef = useRef(null);
-
-  // Topics the chatbot can discuss
-  const allowedTopics = [
-    // Youth Development
-    "youth", "young professional", "graduate", "entry-level", "internship", "mentor", "development", "growth",
-    // Skill Development
-    "skill", "training", "course", "learning", "education", "certification", "programming", "technical", "soft skills",
-    "communication", "leadership", "problem-solving", "critical thinking", "creativity", "teamwork", "project management",
-    // Job Related
-    "job", "career", "employment", "resume", "cv", "interview", "application", "recruitment", "hiring", "salary",
-    "position", "role", "responsibility", "company", "employer", "workplace", "promotion", "advancement", "salary",
-    "experience", "qualification", "skillset", "portfolio", "networking", "recruiter", "hr", "human resources",
-    // General Career/Development
-    "roadmap", "path", "opportunity", "goal", "objective", "plan", "strategy", "guidance", "advice", "help",
-    "learn", "improve", "enhance", "develop", "build", "strengthen", "excel", "succeed", "industry", "field",
-    "domain", "sector", "market", "trend", "future", "prospect", "opportunity", "professional", "career growth"
-  ];
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -193,63 +176,18 @@ export default function Chatassistance() {
     return () => document.head.removeChild(style);
   }, []);
 
-  // Check if message is related to allowed topics
-  const isTopicRelevant = (message) => {
-    const lowerMessage = message.toLowerCase();
-    const allowedTopics = [
-      // Youth Development
-      "youth", "young professional", "graduate", "entry-level", "internship", "mentor", "development", "growth",
-      // Skill Development
-      "skill", "training", "course", "learning", "education", "certification", "programming", "technical", "soft skills",
-      "communication", "leadership", "problem-solving", "critical thinking", "creativity", "teamwork", "project management",
-      // Job Related
-      "job", "career", "employment", "resume", "cv", "interview", "application", "recruitment", "hiring", "salary",
-      "position", "role", "responsibility", "company", "employer", "workplace", "promotion", "advancement", "salary",
-      "experience", "qualification", "skillset", "portfolio", "networking", "recruiter", "hr", "human resources",
-      // General Career/Development
-      "roadmap", "path", "opportunity", "goal", "objective", "plan", "strategy", "guidance", "advice", "help",
-      "learn", "improve", "enhance", "develop", "build", "strengthen", "excel", "succeed", "industry", "field",
-      "domain", "sector", "market", "trend", "future", "prospect", "opportunity", "professional", "career growth"
-    ];
-
-    // Check if any allowed topic is in the message
-    const hasRelevantTopic = allowedTopics.some(topic =>
-      lowerMessage.includes(topic.toLowerCase())
-    );
-
-    return hasRelevantTopic;
-  };
-
   const sendMessage = async () => {
-    if (!input.trim() || loading) return;
+    if (!input.trim()) return;
 
     const userMessage = input.trim();
     setError("");
     setInput("");
 
-    // Check if the message is relevant to the portal's purpose
-    if (!isTopicRelevant(userMessage)) {
-      const restrictedMessages = [
-        { role: "user", content: userMessage },
-        {
-          role: "model",
-          content: "⚠️ Please include at least one relevant keyword from the list below in your question. Your message must contain words like: job, career, skill, interview, resume, training, learning, development, guidance, opportunity, etc. These keywords help me understand your career-related query better! 🎯",
-          isRestricted: true,
-          showKeywords: true
-        }
-      ];
-      setMessages(prev => [...prev, ...restrictedMessages]);
-      // Save restricted messages to Firebase
-      if (currentUser) {
-        await saveChatHistory([...messages, ...restrictedMessages]);
-      }
-      return;
-    }
-
     // Add user message to chat
     const newMessages = [...messages, { role: "user", content: userMessage }];
     setMessages(newMessages);
     setLoading(true);
+    let controller = null;
 
     try {
       // Build history (excluding the current user message)
@@ -262,10 +200,23 @@ export default function Chatassistance() {
       // no-op when the profile hash hasn't changed, so no per-send cost.
 
       if (abortRef.current) abortRef.current.abort();
-      abortRef.current = new AbortController();
+      controller = new AbortController();
+      abortRef.current = controller;
 
-      const data = await careerChat({ message: userMessage, history });
-      const reply = data.reply || "I'm not sure how to answer that — could you rephrase?";
+      const response = await fetch(`${API_URL}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMessage, history }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(detail || `Chat request failed (${response.status})`);
+      }
+
+      const data = await response.json();
+      const reply = data.response || data.reply || "I'm not sure how to answer that. Could you rephrase?";
 
       // Feature 5 — attach RAG explainability to the model message so
       // ReasoningCard can render below it.
@@ -273,11 +224,11 @@ export default function Chatassistance() {
         role: "model",
         content: reply,
         sources: data.sources || [],
-        factors: [],
-        confidence: data.sources?.length ? 'High' : 'Medium',
-        basis: data.sources?.length
-          ? `${data.sources.length} retrieved chunk(s) via in-browser RAG`
-          : 'no corpus sources retrieved',
+        factors: data.factors || [],
+        confidence: data.confidence || (data.sources?.length ? 'High' : 'Medium'),
+        basis: data.basis || (data.sources?.length
+          ? `${data.sources.length} retrieved source(s) via ${data.retrieval_path || 'backend RAG'}`
+          : 'no corpus sources retrieved'),
       };
       const updatedMessages = [...newMessages, modelMsg];
       setMessages(updatedMessages);
@@ -301,7 +252,10 @@ export default function Chatassistance() {
         await saveChatHistory(errorMessages);
       }
     } finally {
-      setLoading(false);
+      if (!controller || abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -375,15 +329,8 @@ export default function Chatassistance() {
                 style={{
                   ...styles.messageBubble,
                   ...(msg.role === "user" ? styles.userBubble : styles.modelBubble),
-                  ...(msg.isRestricted ? styles.restrictedBubble : {}),
                 }}
               >
-                {msg.isRestricted && (
-                  <div style={styles.restrictionWarning}>
-                    <AlertCircle size={16} style={{flexShrink: 0}} />
-                    <span style={{flex: 1}}>Out of Scope</span>
-                  </div>
-                )}
                 <div style={{ margin: "0 0 12px 0", lineHeight: "1.5", wordBreak: "break-word", overflowWrap: "break-word" }}>
                   <ReactMarkdown
                     components={{
@@ -410,17 +357,6 @@ export default function Chatassistance() {
                         <span className="text-[#B3B3C7]">{src.title}</span>
                       </div>
                     ))}
-                  </div>
-                )}
-
-                {msg.showKeywords && (
-                  <div style={styles.keywordsContainer}>
-                    <p style={{ margin: "12px 0 8px 0", fontSize: "13px", fontWeight: "600", color: "#FCD34D" }}>📌 Relevant Keywords:</p>
-                    <div style={styles.keywordsGrid}>
-                      {["youth", "graduate", "internship", "skill", "training", "course", "learning", "certification", "job", "career", "employment", "resume", "cv", "interview", "application", "recruitment", "hiring", "salary", "position", "role", "experience", "portfolio", "networking", "recruiter", "hr", "roadmap", "path", "opportunity", "goal", "strategy", "guidance", "advice", "help", "develop", "enhance", "excel", "succeed", "professional"].map((keyword, i) => (
-                        <span key={i} style={styles.keyword}>{keyword}</span>
-                      ))}
-                    </div>
                   </div>
                 )}
 
@@ -474,7 +410,6 @@ export default function Chatassistance() {
             placeholder="Ask about jobs, skills, career roadmap... (Enter to send, Shift+Enter for new line)"
             style={styles.textarea}
             rows={1}
-            disabled={loading}
           />
           <motion.button
             whileHover={{ scale: 1.05 }}
@@ -482,10 +417,10 @@ export default function Chatassistance() {
             onClick={sendMessage}
             style={{
               ...styles.button,
-              opacity: loading || !input.trim() ? 0.5 : 1,
-              cursor: loading || !input.trim() ? 'not-allowed' : 'pointer'
+              opacity: !input.trim() ? 0.5 : 1,
+              cursor: !input.trim() ? 'not-allowed' : 'pointer'
             }}
-            disabled={loading || !input.trim()}
+            disabled={!input.trim()}
           >
             <Send size={20} />
           </motion.button>
@@ -606,27 +541,6 @@ const styles = {
     border: "1px solid rgba(168,85,247,0.15)",
     borderBottomLeftRadius: "4px",
   },
-  restrictedBubble: {
-    background: "rgba(251,146,60,0.1)",
-    border: "1px solid rgba(251,146,60,0.3)",
-    color: "#FBBF24",
-  },
-  restrictionWarning: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "8px 12px",
-    background: "rgba(251,146,60,0.2)",
-    borderRadius: "8px",
-    fontSize: "12px",
-    fontWeight: "600",
-    color: "#FCD34D",
-    borderBottom: "1px solid rgba(251,146,60,0.3)",
-    paddingBottom: "12px",
-    marginBottom: "12px",
-    wordWrap: "break-word",
-    overflowWrap: "break-word",
-  },
   typingIndicator: {
     display: "flex",
     gap: "6px",
@@ -688,34 +602,5 @@ const styles = {
     transition: "all 0.2s",
     height: "44px",
     width: "44px",
-  },
-  keywordsContainer: {
-    marginTop: "12px",
-    paddingTop: "12px",
-    borderTop: "1px solid rgba(251,146,60,0.3)",
-    background: "rgba(251,146,60,0.05)",
-    borderRadius: "8px",
-    padding: "12px",
-    maxWidth: "100%",
-    overflow: "hidden",
-  },
-  keywordsGrid: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "6px",
-    marginTop: "8px",
-    maxWidth: "100%",
-  },
-  keyword: {
-    display: "inline-block",
-    padding: "4px 10px",
-    background: "rgba(251,146,60,0.2)",
-    border: "1px solid rgba(251,146,60,0.4)",
-    borderRadius: "6px",
-    fontSize: "11px",
-    fontWeight: "500",
-    color: "#FCD34D",
-    whiteSpace: "nowrap",
-    flexShrink: 0,
   },
 };

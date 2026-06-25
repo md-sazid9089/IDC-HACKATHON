@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Tuple
 from dotenv import load_dotenv
+import base64
 import json as _json
 from pathlib import Path
 from io import BytesIO
@@ -1174,46 +1175,13 @@ def _bm25_score(
     return score
 
 
-# ── TASK 4 — Dense scorer with HF API + local fallback ────────
+# ── TASK 4 — Neutral dense scorer for fast corpus-only chat ───
 async def _dense_score_all(
     query: str,
     corpus: List[Dict],
 ) -> List[float]:
     """Return one cosine-similarity score per corpus item."""
-    # --- Embed the query ---
-    q_emb = None
-
-    # Try HF API first (fast, 5 s timeout)
-    if _HF_TOKEN:
-        try:
-            import urllib.request as _urllib_req
-            _hf_url = (
-                'https://api-inference.huggingface.co/pipeline/feature-extraction/'
-                'sentence-transformers/all-mpnet-base-v2'
-            )
-            _body = _json.dumps({
-                'inputs': query,
-                'options': {'wait_for_model': True}
-            }).encode()
-            _req = _urllib_req.Request(_hf_url, data=_body, headers={
-                'Authorization': f'Bearer {_HF_TOKEN}',
-                'Content-Type': 'application/json',
-                'X-Wait-For-Model': 'true',
-            })
-            with _urllib_req.urlopen(_req, timeout=5) as _r:
-                _result = _json.loads(_r.read())
-            q_emb = _result[0] if isinstance(_result[0], list) else _result
-        except Exception as _e:
-            print(f'[RAG] HF embed failed ({_e}), using local fallback')
-
-    # Local fallback
-    if q_emb is None:
-        try:
-            _m = _get_local_model()
-            if _m is not None:
-                q_emb = _m.encode(query, normalize_embeddings=True).tolist()
-        except Exception as _e:
-            print(f'[RAG] Local embed failed: {_e}')
+    return [0.0] * len(corpus)
 
     if q_emb is None:
         # No embedding possible — return zeros
@@ -1476,15 +1444,165 @@ def retrieve_sources(query: str, top_k: int = 3):
     return [], 'none'
 
 
-# ── Gemini client (used by /chat only) ───────────────────────
-try:
-    from google import genai as _genai
-    _GEMINI_API_KEY = _os.getenv('GEMINI_API_KEY', '')
-    _GEMINI_CLIENT = _genai.Client(api_key=_GEMINI_API_KEY) if _GEMINI_API_KEY else None
-except ImportError:
-    _GEMINI_CLIENT = None
-    _GEMINI_API_KEY = ''
-_GEMINI_MODEL = 'gemini-2.0-flash'
+# Chat answer builder
+def _source_text(source: Dict[str, Any]) -> str:
+    return str(source.get('text') or source.get('description') or source.get('snippet') or '')
+
+
+def _source_meta(source: Dict[str, Any]) -> Dict[str, Any]:
+    meta = source.get('metadata') or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    if not meta.get('skills') and source.get('skills'):
+        meta = {**meta, 'skills': source.get('skills')}
+    return meta
+
+
+def _preview(text: str, limit: int) -> str:
+    cleaned = ' '.join((text or '').split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit].rstrip() + '...'
+
+
+def build_rag_answer(query: str, sources: list) -> str:
+    """
+    Build a rich conversational answer from RAG sources.
+    Never apologizes or blocks by topic; it always provides useful guidance.
+    """
+    if not sources:
+        return _generate_general_answer(query)
+
+    parts = []
+    source_types = set(s.get('type', '') for s in sources)
+
+    query_lower = query.lower()
+    if any(w in query_lower for w in ['how', 'learn', 'start', 'begin', 'become']):
+        opener = "Here's what you need to know:"
+    elif any(w in query_lower for w in ['what', 'explain', 'define', 'tell']):
+        opener = "Here's a breakdown:"
+    elif any(w in query_lower for w in ['job', 'role', 'position', 'hire']):
+        opener = "Based on available opportunities:"
+    elif any(w in query_lower for w in ['course', 'learn', 'study', 'resource']):
+        opener = "Here are the best learning resources:"
+    elif any(w in query_lower for w in ['roadmap', 'path', 'plan', 'timeline']):
+        opener = "Here's a structured path forward:"
+    else:
+        opener = "Here's what I found:"
+
+    parts.append(opener)
+    parts.append('')
+
+    for s in sources[:3]:
+        s_type = s.get('type', '')
+        s_title = s.get('title', '') or 'Source'
+        s_text = _source_text(s)
+        meta = _source_meta(s)
+
+        if s_type == 'job':
+            skills = meta.get('skills', [])
+            skills_mention = f" key skills: {', '.join(skills[:5])}" if skills else ''
+            parts.append(f"- **{s_title}** (job) -{skills_mention}")
+            parts.append(f"  {_preview(s_text, 200)}")
+        elif s_type == 'course':
+            skills = meta.get('skills', [])
+            platform = meta.get('platform', '')
+            cost = meta.get('cost', '')
+            skills_mention = f" key skills: {', '.join(skills[:4])}" if skills else ''
+            label = ' - '.join(str(x) for x in [platform, cost] if x)
+            parts.append(f"- **{s_title}** (course){' - ' + label if label else ''}{skills_mention}")
+            parts.append(f"  {_preview(s_text, 180)}")
+        elif s_type == 'advice':
+            clean = _preview(s_text, 300).replace('Q: ', '').replace(' A: ', '\n  ')
+            parts.append(f"- {clean}")
+        elif s_type == 'roadmap':
+            parts.append(f"- **{s_title}**")
+            parts.append(f"  {_preview(s_text, 250)}")
+        else:
+            parts.append(f"- **{s_title}**: {_preview(s_text, 200)}")
+
+    parts.append('')
+    parts.append(_get_followup_tip(query, source_types))
+
+    return '\n'.join(parts)
+
+
+def _generate_general_answer(query: str) -> str:
+    """Give a helpful career-domain answer when no source is retrieved."""
+    query_lower = query.lower()
+
+    if any(w in query_lower for w in ['frontend', 'react', 'css', 'html', 'javascript', 'vue', 'angular']):
+        return (
+            "For frontend development, start with HTML, CSS, and JavaScript fundamentals. "
+            "React is a highly requested framework, so learn hooks, state management, and REST API integration. "
+            "Build 3-5 portfolio projects and deploy them on Vercel or Netlify. "
+            "Ask about specific frontend roles or React courses for more targeted advice."
+        )
+    if any(w in query_lower for w in ['backend', 'python', 'node', 'api', 'django', 'fastapi', 'express']):
+        return (
+            "For backend development, Python with FastAPI or Django is a strong path. "
+            "Learn REST API design, database management with PostgreSQL, and authentication with JWT. "
+            "Docker is useful for deployment and team workflows. "
+            "Ask about specific backend roles or Python courses for detailed guidance."
+        )
+    if any(w in query_lower for w in ['devops', 'docker', 'kubernetes', 'aws', 'ci', 'cd', 'cloud']):
+        return (
+            "DevOps starts with Linux and Docker fundamentals. "
+            "Learn CI/CD with GitHub Actions, infrastructure as code with Terraform, and container orchestration with Kubernetes. "
+            "AWS certification can be valuable when paired with hands-on projects. "
+            "Ask about specific DevOps roles or Docker courses for more detail."
+        )
+    if any(w in query_lower for w in ['machine learning', 'ml', 'ai', 'data science', 'pytorch', 'tensorflow']):
+        return (
+            "For AI/ML, start with Python, pandas, and scikit-learn. "
+            "Then move into deep learning with PyTorch and NLP workflows with Hugging Face tools. "
+            "Build small projects that show data cleaning, training, evaluation, and deployment. "
+            "Ask about specific ML roles or courses for a detailed learning path."
+        )
+    if any(w in query_lower for w in ['salary', 'negotiate', 'pay', 'compensation']):
+        return (
+            "Tech salaries vary by role, experience, and location. "
+            "Research market rates on LinkedIn Jobs and local job boards before interviews. "
+            "Multiple offers improve negotiation leverage, and specialized skills usually raise compensation. "
+            "Ask about a specific role to get more targeted salary insight."
+        )
+    if any(w in query_lower for w in ['interview', 'prepare', 'question', 'technical', 'hiring']):
+        return (
+            "Technical interview preparation has three pillars: data structures and algorithms, system design for senior roles, "
+            "and project-based discussions about your portfolio work. "
+            "Practice mock interviews and research the company's tech stack beforehand. "
+            "Ask about interview questions by difficulty to practice."
+        )
+    if any(w in query_lower for w in ['portfolio', 'project', 'github', 'build']):
+        return (
+            "A strong portfolio has 3-5 projects that solve real problems. "
+            "Include a fullstack web app, a REST API project, and ideally one AI or data project. "
+            "Deploy everything to live URLs and write clear READMEs with screenshots and setup instructions. "
+            "Quality beats quantity: one impressive project is better than many tutorial clones."
+        )
+    return (
+        "CareerPath covers frontend, backend, DevOps, AI/ML, and communication career tracks. "
+        "You can explore job roles, learning resources, career roadmaps, interview preparation, salary guidance, "
+        "and skill development. "
+        "Good starting questions include: 'How do I become a React developer?' or "
+        "'What skills do I need for machine learning?'"
+    )
+
+
+def _get_followup_tip(query: str, source_types: set) -> str:
+    """Generate a contextual follow-up suggestion."""
+    query_lower = query.lower()
+    if 'job' in source_types and 'course' not in source_types:
+        return "Next step: ask about courses or learning resources to build these skills."
+    if 'course' in source_types and 'job' not in source_types:
+        return "Next step: ask about job roles that use these skills to see career opportunities."
+    if 'roadmap' in source_types:
+        return "Next step: ask about a specific stage or skill in this roadmap for more detail."
+    if 'advice' in source_types:
+        return "Next step: ask about courses or job roles related to this topic."
+    if any(w in query_lower for w in ['how', 'learn', 'start']):
+        return "Next step: ask about job roles in this area to see what employers expect."
+    return "Next step: ask a follow-up question to dive deeper into any of these topics."
 
 
 @app.options('/chat')
@@ -1494,11 +1612,8 @@ async def options_chat():
 
 @app.post('/chat')
 async def chat(req: Dict[str, Any]):
-    """Hybrid RAG + Gemini career assistant."""
+    """Hybrid RAG career assistant."""
     try:
-        if not _GEMINI_CLIENT:
-            raise HTTPException(status_code=500, detail='GEMINI_API_KEY not configured')
-
         user_message = (req.get('message', '') or '').strip()
         if not user_message:
             raise HTTPException(status_code=400, detail='message field is required')
@@ -1514,72 +1629,79 @@ async def chat(req: Dict[str, Any]):
                 experience_level=experience_level,
             )
             top_chunks = await _hybrid_retrieve(query, filtered, top_k=4, alpha=0.5)
-            context_window = _build_context_window(top_chunks)
             retrieval_path = 'hybrid'
             sources = [
                 {
                     'id': c.get('id', c.get('title', '')),
+                    'parent_id': c.get('id', c.get('title', '')),
                     'type': c.get('type', ''),
                     'title': c.get('title', ''),
-                    'snippet': c.get('description', '')[:120],
-                    'score': c['_hybrid_score'],
+                    'text': c.get('description', ''),
+                    'description': c.get('description', ''),
+                    'metadata': {
+                        'skills': c.get('skills', []),
+                        'track': c.get('track', ''),
+                        'level': c.get('level', ''),
+                    },
+                    'score': c.get('_hybrid_score', 0),
                 }
                 for c in top_chunks
             ]
         else:
-            context_window = ''
             retrieval_path = 'none'
             sources = []
-            top_chunks = []
 
-        contents = []
-        for item in (req.get('history') or [])[-4:]:
-            role = item.get('role', 'user')
-            content = (item.get('content', '') or '').strip()[:300]
-            if content:
-                contents.append({
-                    'role': role,
-                    'parts': [{'text': content}],
-                })
-
-        if context_window:
-            contents.append({'role': 'user', 'parts': [{'text': context_window}]})
-
-        contents.append({'role': 'user', 'parts': [{'text': user_message}]})
-
-        response = _GEMINI_CLIENT.models.generate_content(
-            model=_GEMINI_MODEL,
-            contents=contents,
-        )
-
-        reply_text = ''
-        if response.candidates:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                reply_text = ''.join(
-                    part.text for part in candidate.content.parts
-                    if hasattr(part, 'text') and part.text
-                )
-
-        if not reply_text:
-            reply_text = "I'm sorry, I couldn't generate a response. Please try again."
+        if not grade_sources(query, sources):
+            fallback_sources = _keyword_search(user_message, top_k=4)
+            fallback_path = 'keyword'
+            if fallback_sources:
+                sources = fallback_sources
+                retrieval_path = fallback_path
 
         factors = [
             {
-                'label': f"{c['title']} ({c['type']}) (rag_source)",
+                'label': f"{s.get('title', 'Source')} (rag_source)",
                 'positive': True,
                 'signal_type': 'rag_source',
-                'value': c['_hybrid_score'],
+                'value': s.get('score', s.get('type', '')),
             }
-            for c in top_chunks
+            for s in sources
         ]
 
-        basis = f"RAG retrieval via {retrieval_path}. Search query: '{query}'"
-        envelope = _build_envelope(reply_text, factors, basis)
-        envelope['reply'] = reply_text
-        envelope['sources'] = sources
-        envelope['retrieval_path'] = retrieval_path
-        return envelope
+        response_text = build_rag_answer(query, sources)
+        used_fallback = retrieval_path in ('keyword', 'none')
+        has_strong = any(
+            f['signal_type'] in ('rag_source', 'skill_match')
+            for f in factors
+        )
+        if len(factors) >= 3 and has_strong and not used_fallback:
+            confidence = 'High'
+        elif len(factors) >= 1 and not used_fallback:
+            confidence = 'Medium'
+        else:
+            confidence = 'Low'
+
+        response_sources = [
+            {
+                'id': s.get('parent_id', s.get('chunk_id', s.get('id', ''))),
+                'type': s.get('type', ''),
+                'title': s.get('title', ''),
+                'snippet': _source_text(s)[:120],
+            }
+            for s in sources
+        ]
+
+        basis = f"RAG retrieval via {retrieval_path}. Query: '{query}'"
+        return {
+            'response': response_text,
+            'reply': response_text,
+            'sources': response_sources,
+            'factors': factors,
+            'confidence': confidence,
+            'basis': basis,
+            'retrieval_path': retrieval_path,
+            'signal_types_used': ['rag_source'] if factors else [],
+        }
 
     except HTTPException:
         raise

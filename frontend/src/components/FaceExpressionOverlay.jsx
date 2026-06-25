@@ -3,15 +3,21 @@
  * ---------------------------------------------------------------
  * Live webcam → Hugging Face vit-face-expression (browser direct).
  *
- * Architecture: getUserMedia (only after user gesture) → <video> →
- * canvas snapshot every 3 s → fetch HF Inference API directly →
- * render top-1 emotion badge + summary on finalize().
+ * UI no longer shows emotion labels (happy / sad / angry / surprise / …).
+ * Instead, every detection frame is mapped to a single actionable interview
+ * coaching tip, surfaced as a rolling 3-tip queue under the camera.
  *
- * NO backend hop. NO local model. The HF token is the public
- * VITE_HF_API_TOKEN baked into the client bundle.
+ * Architecture: The current build does NOT use face-api.js (banned by the
+ * project's "no local ML model" architecture). Per-frame `expressions` come
+ * from Hugging Face Inference API (HF returns label/score pairs). Per-frame
+ * `landmarks` are not available, so the landmark-driven eye-contact tip is
+ * implemented as a graceful no-op (the same priority chain is preserved).
  *
- * CHANGE 1 — Face bounding box canvas overlay (corner-style purple box)
- * CHANGE 2 — Expression coaching feedback surfaced via onCoachingUpdate cb
+ * Exports:
+ *   default — the FaceExpressionOverlay component
+ *   getExpressionCoaching(distribution) — kept for back-compat with
+ *     MockInterview.jsx, which still calls it on the finalised emotion
+ *     percentage distribution at end-of-interview.
  */
 
 import {
@@ -22,21 +28,14 @@ import {
   useRef,
   useState,
 } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { CheckCircle2, AlertCircle, Eye } from 'lucide-react';
 import { hfInference, HFError } from '../services/hfClient';
 
 const EXPRESSION_MODEL = 'trpakov/vit-face-expression';
 const SAMPLE_INTERVAL_MS = 3000;
+const TIP_FADE_AFTER_MS = 4000;
 const NEGATIVE_EMOTIONS = new Set(['angry', 'disgust', 'fear', 'sad']);
-
-const EMOTION_META = {
-  happy:    { emoji: '😊', color: '#22c55e' },
-  neutral:  { emoji: '😐', color: '#a855f7' },
-  surprise: { emoji: '😲', color: '#f59e0b' },
-  fear:     { emoji: '😨', color: '#ef4444' },
-  sad:      { emoji: '😢', color: '#60a5fa' },
-  angry:    { emoji: '😠', color: '#ef4444' },
-  disgust:  { emoji: '🤢', color: '#f97316' },
-};
 
 function isInsecureContext() {
   if (typeof window === 'undefined') return false;
@@ -45,182 +44,180 @@ function isInsecureContext() {
   return !['localhost', '127.0.0.1', '::1'].includes(hostname);
 }
 
-// ── CHANGE 2: Expression coaching pure function ──────────────────────────────
-export function getExpressionCoaching(emotions) {
-  /*
-   emotions shape: { happy: 27, sad: 40, fear: 32, angry: 2, ... }
-   Returns array of coaching objects prioritized by impact.
-  */
-  if (!emotions || Object.keys(emotions).length === 0) return [];
+// =====================================================================
+// Per-frame coaching priority chain (matches the redesigned spec).
+//
+// Input shape: { happy, sad, angry, fear, surprise, disgust, neutral }
+// where each value is a fractional score 0..1 from HF Inference output.
+// Aliases (fearful/surprised/disgusted) are added so the priority chain
+// reads naturally if expressions ever come from a face-api.js source.
+//
+// Returns: { tip: string, type: 'positive'|'warning'|'info', icon: string }
+// =====================================================================
+function _normalizeScores(hfList) {
+  // hfList example: [{label:'happy', score:0.82}, ...]
+  const out = {};
+  for (const { label, score } of hfList || []) {
+    out[label] = score;
+  }
+  // Alias HF names → face-api.js names
+  if ('fear' in out)     out.fearful   = out.fear;
+  if ('surprise' in out) out.surprised = out.surprise;
+  if ('disgust' in out)  out.disgusted = out.disgust;
+  return out;
+}
+
+function _pickRealtimeTip(expressions) {
+  if (!expressions || Object.keys(expressions).length === 0) {
+    return { tip: 'Move closer to the camera — face not detected', type: 'warning', icon: 'Eye' };
+  }
+  if ((expressions.neutral || 0) > 0.85) {
+    return { tip: 'Great composure — you look calm and professional', type: 'positive', icon: 'CheckCircle2' };
+  }
+  if ((expressions.happy || 0) > 0.6) {
+    return { tip: 'Natural warmth showing — keep that confident energy', type: 'positive', icon: 'CheckCircle2' };
+  }
+  if ((expressions.fearful || 0) > 0.35 || (expressions.surprised || 0) > 0.5) {
+    return { tip: 'Take a breath — slow down and speak with intention', type: 'warning', icon: 'AlertCircle' };
+  }
+  if ((expressions.disgusted || 0) > 0.3 || (expressions.angry || 0) > 0.3) {
+    return { tip: 'Relax your jaw and brow — aim for an open, neutral face', type: 'warning', icon: 'AlertCircle' };
+  }
+  if ((expressions.sad || 0) > 0.35) {
+    return { tip: 'Lift your chin slightly and maintain an upright posture', type: 'warning', icon: 'AlertCircle' };
+  }
+  return { tip: 'Hold your position — looking good', type: 'positive', icon: 'CheckCircle2' };
+}
+
+function _iconFor(name) {
+  if (name === 'CheckCircle2') return CheckCircle2;
+  if (name === 'AlertCircle')  return AlertCircle;
+  if (name === 'Eye')          return Eye;
+  return CheckCircle2;
+}
+
+function _colorClasses(type) {
+  if (type === 'positive') return { border: 'border-l-emerald-500', icon: 'text-emerald-400' };
+  if (type === 'info')     return { border: 'border-l-purple-400', icon: 'text-purple-400' };
+  return                        { border: 'border-l-amber-400',   icon: 'text-amber-400' };
+}
+
+// =====================================================================
+// Legacy export — consumed by MockInterview.jsx at end-of-interview.
+// Receives the CUMULATIVE percent distribution (0-100 per label).
+// Returns an array of coaching cards summarising the whole session.
+// =====================================================================
+export function getExpressionCoaching(distribution) {
+  if (!distribution || Object.keys(distribution).length === 0) return [];
 
   const coaching = [];
-  const entries = Object.entries(emotions).sort((a, b) => b[1] - a[1]);
-  const dominant = entries[0];
-  const dominantName = dominant[0].toLowerCase();
-  const dominantPct = dominant[1];
-
   const negativeTotal =
-    (emotions.sad || 0) +
-    (emotions.fear || 0) +
-    (emotions.angry || 0) +
-    (emotions.disgust || 0);
+    (distribution.sad || 0) + (distribution.fear || 0) +
+    (distribution.angry || 0) + (distribution.disgust || 0);
 
   if (negativeTotal > 50) {
-    coaching.push({
-      icon: '😟',
-      priority: 'high',
-      tip: 'Relax your facial muscles — you appear tense. Take a slow breath before answering.',
-    });
+    coaching.push({ icon: '😟', priority: 'high',
+      tip: 'Relax your facial muscles — you appeared tense overall. Practise slow breathing before answering.' });
   }
-
-  if (dominantName === 'sad' && dominantPct > 30) {
-    coaching.push({
-      icon: '💪',
-      priority: 'high',
-      tip: 'Lift the corners of your mouth slightly — a neutral-to-positive expression builds interviewer confidence in you.',
-    });
+  if ((distribution.sad || 0) > 30) {
+    coaching.push({ icon: '💪', priority: 'high',
+      tip: 'Try to lift the corners of your mouth slightly — a neutral-to-positive expression reads more confident.' });
   }
-
-  if (dominantName === 'fear' && dominantPct > 25) {
-    coaching.push({
-      icon: '🧘',
-      priority: 'high',
-      tip: 'You look nervous — this is normal. Slow your speech, make eye contact with the camera, and pause before answering.',
-    });
+  if ((distribution.fear || 0) > 25) {
+    coaching.push({ icon: '🧘', priority: 'high',
+      tip: 'You looked anxious. Slow your speech, look at the lens, and pause before answering.' });
   }
-
-  if (dominantName === 'angry' && dominantPct > 15) {
-    coaching.push({
-      icon: '😌',
-      priority: 'medium',
-      tip: 'Your expression reads as intense. Soften your brow and maintain a calm, open face.',
-    });
+  if ((distribution.angry || 0) > 15) {
+    coaching.push({ icon: '😌', priority: 'medium',
+      tip: 'Your expression read as intense at times. Soften your brow and keep an open face.' });
   }
-
-  if ((emotions.happy || 0) > 40) {
-    coaching.push({
-      icon: '✅',
-      priority: 'good',
-      tip: 'Great energy! Your positive expression is building rapport with the interviewer.',
-    });
+  if ((distribution.happy || 0) > 40) {
+    coaching.push({ icon: '✅', priority: 'good',
+      tip: 'Great positive energy — keep that going.' });
+  } else if ((distribution.happy || 0) < 10 && negativeTotal < 40) {
+    coaching.push({ icon: '😊', priority: 'medium',
+      tip: 'Try to show more enthusiasm — a small smile signals engagement.' });
   }
-
-  if ((emotions.happy || 0) < 10 && negativeTotal < 40) {
-    coaching.push({
-      icon: '😊',
-      priority: 'medium',
-      tip: 'Try to show more enthusiasm — a slight smile signals confidence and engagement.',
-    });
-  }
-
-  // Eye contact proxy — fear often correlates with looking away
-  if ((emotions.fear || 0) > 20) {
-    coaching.push({
-      icon: '👁️',
-      priority: 'medium',
-      tip: 'Look directly at the camera lens — this simulates eye contact in video interviews.',
-    });
-  }
-
   return coaching;
 }
 
-// ── CHANGE 1: Canvas drawing helpers ─────────────────────────────────────────
-function drawBox(ctx, x, y, w, h, color, label) {
-  // Corner-style box (not full rectangle) — looks professional
-  const cornerLen = 20;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 8;
+// =====================================================================
+// Canvas: subtle bounding-box overlay drawn in #A855F7 (no text).
+// =====================================================================
+function _drawBoundingBox(canvas, video) {
+  if (!canvas || !video) return;
+  const rect = video.getBoundingClientRect();
+  canvas.width  = rect.width  || video.videoWidth  || 640;
+  canvas.height = rect.height || video.videoHeight || 480;
 
-  // Top-left corner
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Estimated face area — centered, ~50% wide, ~75% tall.
+  const x = canvas.width  * 0.25;
+  const y = canvas.height * 0.10;
+  const w = canvas.width  * 0.50;
+  const h = canvas.height * 0.75;
+  const r = 14;
+
+  ctx.strokeStyle = '#A855F7';
+  ctx.lineWidth   = 1.5;
   ctx.beginPath();
-  ctx.moveTo(x, y + cornerLen);
-  ctx.lineTo(x, y);
-  ctx.lineTo(x + cornerLen, y);
-  ctx.stroke();
-
-  // Top-right corner
-  ctx.beginPath();
-  ctx.moveTo(x + w - cornerLen, y);
-  ctx.lineTo(x + w, y);
-  ctx.lineTo(x + w, y + cornerLen);
-  ctx.stroke();
-
-  // Bottom-left corner
-  ctx.beginPath();
-  ctx.moveTo(x, y + h - cornerLen);
-  ctx.lineTo(x, y + h);
-  ctx.lineTo(x + cornerLen, y + h);
-  ctx.stroke();
-
-  // Bottom-right corner
-  ctx.beginPath();
-  ctx.moveTo(x + w - cornerLen, y + h);
-  ctx.lineTo(x + w, y + h);
-  ctx.lineTo(x + w - cornerLen, y + h);
-  ctx.stroke();
-
-  // Label above box
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = color;
-  ctx.font = 'bold 13px Poppins, sans-serif';
-  ctx.fillText(label, x + 4, y - 8);
-}
-
-function drawFaceBox(overlayCanvas, videoEl, box) {
-  if (!overlayCanvas || !videoEl) return;
-  const rect = videoEl.getBoundingClientRect();
-  overlayCanvas.width  = rect.width  || videoEl.videoWidth  || 640;
-  overlayCanvas.height = rect.height || videoEl.videoHeight || 480;
-
-  const ctx = overlayCanvas.getContext('2d');
-  ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-  if (!box) {
-    // Estimated face position — center of frame
-    const x = overlayCanvas.width  * 0.25;
-    const y = overlayCanvas.height * 0.10;
-    const w = overlayCanvas.width  * 0.50;
-    const h = overlayCanvas.height * 0.75;
-    drawBox(ctx, x, y, w, h, '#A855F7', 'Face Detected');
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, r);
   } else {
-    // Scale API box coordinates to canvas dimensions
-    const scaleX = overlayCanvas.width  / (box.imageWidth  || overlayCanvas.width);
-    const scaleY = overlayCanvas.height / (box.imageHeight || overlayCanvas.height);
-    drawBox(
-      ctx,
-      box.x      * scaleX,
-      box.y      * scaleY,
-      box.width  * scaleX,
-      box.height * scaleY,
-      '#A855F7',
-      'Face Detected',
-    );
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
   }
+  ctx.stroke();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
+// =====================================================================
+// Component
+// =====================================================================
 const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
   { active, onCoachingUpdate },
   ref,
 ) {
   const videoRef         = useRef(null);
-  const canvasRef        = useRef(null);       // hidden — used for HF capture
-  const overlayCanvasRef = useRef(null);       // visible — used for face box
+  const canvasRef        = useRef(null);   // hidden — used for HF capture
+  const overlayCanvasRef = useRef(null);   // visible — bounding box
   const streamRef        = useRef(null);
   const intervalRef      = useRef(null);
   const inFlightRef      = useRef(false);
   const emotionLogRef    = useRef([]);
+  const lastTipKeyRef    = useRef('');     // dedup onCoachingUpdate calls
 
-  const [liveEmotion,   setLiveEmotion]   = useState(null);
+  const [tipQueue,      setTipQueue]      = useState([]); // [{ tip, type, icon, addedAt }]
+  const [, _setTick]    = useState(0);                    // ticker for fade re-render
   const [camError,      setCamError]      = useState(null);
+  const [hfError,       setHfError]       = useState(null); // transient HF problem (non-blocking)
   const [updating,      setUpdating]      = useState(false);
   const [cameraStarted, setCameraStarted] = useState(false);
-  const [httpsWarning]                    = useState(isInsecureContext());
   const [faceVisible,   setFaceVisible]   = useState(false);
+  const [httpsWarning]                    = useState(isInsecureContext());
+
+  // Periodic re-render so the "fade after 4s" opacity check stays current.
+  useEffect(() => {
+    if (!tipQueue.length) return;
+    const id = setInterval(() => _setTick((t) => (t + 1) % 1_000_000), 1000);
+    return () => clearInterval(id);
+  }, [tipQueue.length]);
+
+  const _pushTip = useCallback((tipObj) => {
+    const key = `${tipObj.type}::${tipObj.tip}`;
+    if (key === lastTipKeyRef.current) return; // dedup: same tip → no update
+    lastTipKeyRef.current = key;
+
+    setTipQueue((prev) => [{ ...tipObj, addedAt: Date.now() }, ...prev].slice(0, 3));
+    if (typeof onCoachingUpdate === 'function') {
+      onCoachingUpdate({ tip: tipObj.tip, type: tipObj.type, icon: tipObj.icon });
+    }
+  }, [onCoachingUpdate]);
 
   const stopAll = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -230,7 +227,6 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
       streamRef.current = null;
     }
     if (videoRef.current) videoRef.current.srcObject = null;
-    // Clear overlay canvas when stopping
     if (overlayCanvasRef.current) {
       const ctx = overlayCanvasRef.current.getContext('2d');
       ctx.clearRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height);
@@ -258,28 +254,39 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
       const buf = await blob.arrayBuffer();
       const raw = await hfInference(EXPRESSION_MODEL, buf, 'image-classification');
       const list = Array.isArray(raw?.[0]) ? raw[0] : raw;
+
       if (Array.isArray(list) && list.length) {
-        const top = list[0];
-        setLiveEmotion(top);
-        emotionLogRef.current.push(top);
+        // Log the dominant label for the cumulative summary (powers
+        // MockInterview.jsx's end-of-interview ReasoningCard).
+        emotionLogRef.current.push(list[0]);
+        setHfError(null); // clear any stale error indicator
 
-        // ── CHANGE 1: Draw bounding box on overlay canvas ──
+        // Draw bounding box (no text per redesign spec).
         setFaceVisible(true);
-        drawFaceBox(overlayCanvasRef.current, videoRef.current, null /* no box from API */);
+        _drawBoundingBox(overlayCanvasRef.current, videoRef.current);
 
-        // ── CHANGE 2: Emit live coaching update from current log ──
-        if (typeof onCoachingUpdate === 'function') {
-          const summary = computeSummary(emotionLogRef.current);
-          if (summary) onCoachingUpdate(summary.distribution);
-        }
+        // Map this frame to a single coaching tip (priority chain).
+        const expressions = _normalizeScores(list);
+        const tip = _pickRealtimeTip(expressions);
+        _pushTip(tip);
+      } else {
+        _pushTip({ tip: 'Move closer to the camera — face not detected',
+                   type: 'warning', icon: 'Eye' });
       }
     } catch (err) {
       if (err instanceof HFError && err.status === 401) {
         setCamError('Hugging Face token missing or invalid. Set VITE_HF_API_TOKEN.');
         stopAll();
         setCameraStarted(false);
+      } else {
+        // Non-401 — surface so the user knows something failed, but keep
+        // sampling. Most are 503 cold-starts that resolve in a few seconds.
+        const msg = err instanceof HFError
+          ? `HF ${err.status}: ${err.message}`
+          : `${err?.name || 'Error'}: ${err?.message || err}`;
+        console.warn('[FaceExpressionOverlay] HF call failed:', msg);
+        setHfError(msg.slice(0, 120));
       }
-      // otherwise: silent — never interrupt the interview
     } finally {
       inFlightRef.current = false;
       setUpdating(false);
@@ -289,7 +296,8 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
   const startCamera = useCallback(async () => {
     setCamError(null);
     emotionLogRef.current = [];
-    setLiveEmotion(null);
+    setTipQueue([]);
+    lastTipKeyRef.current = '';
     setFaceVisible(false);
 
     if (!navigator?.mediaDevices?.getUserMedia) {
@@ -308,6 +316,9 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
         await videoRef.current.play().catch(() => { /* autoplay race — ignore */ });
       }
       setCameraStarted(true);
+      // Kick off the first capture quickly so the user sees a tip within ~1s.
+      // The video element typically reaches readyState 2 within ~300-500ms.
+      setTimeout(() => { captureAndAnalyze(); }, 600);
       intervalRef.current = setInterval(captureAndAnalyze, SAMPLE_INTERVAL_MS);
     } catch (err) {
       const name = err?.name || '';
@@ -323,7 +334,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stop the camera when the parent flags the session inactive.
+  // Parent flagged inactive → stop the camera.
   useEffect(() => {
     if (!active && cameraStarted) {
       stopAll();
@@ -338,11 +349,11 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
     finalize() {
       stopAll();
       setCameraStarted(false);
-      return computeSummary(emotionLogRef.current);
+      return _computeSummary(emotionLogRef.current);
     },
   }));
 
-  function computeSummary(log) {
+  function _computeSummary(log) {
     if (!log.length) return null;
     const counts = {};
     let negCount = 0;
@@ -364,100 +375,120 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
     };
   }
 
-  const meta = liveEmotion ? (EMOTION_META[liveEmotion.label] || { emoji: '🙂', color: '#a855f7' }) : null;
+  // =====================================================================
+  // Render
+  // =====================================================================
+  const now = Date.now();
 
   return (
-    <div className="relative w-full rounded-xl overflow-hidden bg-[#11152B] border border-purple-900/40">
-      {/* Hidden canvas — used only for HF API capture */}
-      <canvas ref={canvasRef} className="hidden" />
+    <div className="w-full space-y-3">
+      {/* Webcam frame */}
+      <div className="relative w-full rounded-xl overflow-hidden bg-[#11152B] border border-purple-900/40">
+        {/* Hidden canvas — used for HF capture only */}
+        <canvas ref={canvasRef} className="hidden" />
 
-      {httpsWarning && (
-        <div className="px-3 py-2 text-xs text-amber-300 bg-amber-950/40 border-b border-amber-900/40">
-          ⚠ Camera requires HTTPS in production. On localhost this should work — check browser permissions.
-        </div>
-      )}
+        {httpsWarning && (
+          <div className="px-3 py-2 text-xs text-amber-300 bg-amber-950/40 border-b border-amber-900/40">
+            ⚠ Camera requires HTTPS in production. On localhost this should work — check browser permissions.
+          </div>
+        )}
 
-      {/* The <video> element is always rendered so videoRef is valid when
-          startCamera() resolves. Visibility is toggled with CSS. */}
-      <video
-        ref={videoRef}
-        autoPlay
-        muted
-        playsInline
-        className="w-full rounded-xl object-cover"
-        style={{
-          transform: 'scaleX(-1)',
-          maxHeight: '280px',
-          display: cameraStarted && !camError ? 'block' : 'none',
-        }}
-      />
-
-      {/* ── CHANGE 1: Overlay canvas — face bounding box ─────────────────── */}
-      {cameraStarted && !camError && faceVisible && (
-        <canvas
-          ref={overlayCanvasRef}
+        {/* Video element is always rendered so videoRef is valid at startCamera time. */}
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          className="w-full rounded-xl object-cover"
           style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'none',
-            // Mirror to match video's scaleX(-1) transform
             transform: 'scaleX(-1)',
+            maxHeight: '280px',
+            display: cameraStarted && !camError ? 'block' : 'none',
           }}
         />
-      )}
 
-      {camError ? (
-        <div className="flex flex-col items-center justify-center h-48 px-4 text-center gap-3">
-          <p className="text-sm text-[#FCA5A5]">{camError}</p>
-          <button
-            onClick={startCamera}
-            className="text-xs px-3 py-1.5 rounded-md border border-purple-500/40 text-purple-300 hover:bg-purple-500/10"
-          >
-            Try Again
-          </button>
-        </div>
-      ) : !cameraStarted ? (
-        <div className="flex flex-col items-center justify-center h-48 px-4 text-center gap-3">
-          <p className="text-sm text-[#B3B3C7]">Enable your webcam for live expression analysis.</p>
-          <button
-            onClick={startCamera}
-            disabled={!active}
-            className="text-xs px-4 py-2 rounded-md bg-purple-600/80 hover:bg-purple-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {active ? 'Enable Camera' : 'Start interview first'}
-          </button>
-        </div>
-      ) : (
-        <>
-          {liveEmotion && meta && (
-            <div
-              className="absolute bottom-3 left-3 flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-semibold backdrop-blur-sm"
-              style={{
-                background: 'rgba(11,14,28,0.75)',
-                border: `1px solid ${meta.color}55`,
-                color: meta.color,
-              }}
+        {/* Bounding-box overlay (no text). */}
+        {cameraStarted && !camError && faceVisible && (
+          <canvas
+            ref={overlayCanvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            style={{ transform: 'scaleX(-1)' }}
+          />
+        )}
+
+        {camError ? (
+          <div className="flex flex-col items-center justify-center h-48 px-4 text-center gap-3">
+            <p className="text-sm text-[#FCA5A5]">{camError}</p>
+            <button
+              onClick={startCamera}
+              className="text-xs px-3 py-1.5 rounded-md border border-purple-500/40 text-purple-300 hover:bg-purple-500/10"
             >
-              <span className="text-base leading-none">{meta.emoji}</span>
-              <span className="capitalize">{liveEmotion.label}</span>
-              <span className="text-xs opacity-70">{Math.round(liveEmotion.score * 100)}%</span>
-            </div>
+              Try Again
+            </button>
+          </div>
+        ) : !cameraStarted ? (
+          <div className="flex flex-col items-center justify-center h-48 px-4 text-center gap-3">
+            <p className="text-sm text-[#B3B3C7]">Enable your webcam for live expression coaching.</p>
+            <button
+              onClick={startCamera}
+              disabled={!active}
+              className="text-xs px-4 py-2 rounded-md bg-purple-600/80 hover:bg-purple-500 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {active ? 'Enable Camera' : 'Start interview first'}
+            </button>
+          </div>
+        ) : (
+          <>
+            {updating && (
+              <div className="absolute top-3 right-3 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-purple-300/80">
+                <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
+                updating
+              </div>
+            )}
+            {!active && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-xl">
+                <span className="text-[#B3B3C7] text-sm">Camera paused</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Tip queue — under the camera, NOT overlaid */}
+      <AnimatePresence initial={false}>
+        {tipQueue.map((t, idx) => {
+          const Icon = _iconFor(t.icon);
+          const { border, icon: iconColor } = _colorClasses(t.type);
+          const stale = idx > 0 || (now - t.addedAt) > TIP_FADE_AFTER_MS;
+          const opacity = stale ? 0.5 : 1;
+          return (
+            <motion.div
+              key={t.addedAt}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity, x: 0 }}
+              exit={{ opacity: 0, x: -10 }}
+              transition={{ duration: 0.3 }}
+              className={`flex items-start gap-2 bg-white/5 rounded-lg px-3 py-2 text-xs border-l-2 ${border}`}
+            >
+              <Icon size={14} className={`${iconColor} flex-shrink-0 mt-0.5`} />
+              <p className="text-white/80 leading-snug">{t.tip}</p>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+
+      {tipQueue.length === 0 && cameraStarted && !camError && (
+        <div className="text-[11px] italic px-1">
+          {updating ? (
+            <span className="text-purple-300/80">Analysing your expression…</span>
+          ) : hfError ? (
+            <span className="text-amber-300/90">
+              Hugging Face is warming up the model — first tip can take up to 20s. ({hfError})
+            </span>
+          ) : (
+            <span className="text-white/40">Waiting for the first frame…</span>
           )}
-          {updating && (
-            <div className="absolute top-3 right-3 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-purple-300/80">
-              <span className="w-2 h-2 rounded-full bg-purple-400 animate-ping" />
-              updating
-            </div>
-          )}
-          {!active && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-xl">
-              <span className="text-[#B3B3C7] text-sm">Camera paused</span>
-            </div>
-          )}
-        </>
+        </div>
       )}
     </div>
   );

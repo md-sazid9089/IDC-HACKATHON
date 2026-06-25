@@ -2003,6 +2003,85 @@ async def _llm_hot_skills(cv_analysis: Dict[str, List[str]]) -> str:
         return ''
 
 
+# ---------------------------------------------------------------------------
+# POST /face-expression — proxy for trpakov/vit-face-expression
+# ---------------------------------------------------------------------------
+# Replaces the previous browser-direct HF call from FaceExpressionOverlay.jsx.
+# Browser POSTs the captured JPEG frame as multipart; backend forwards the
+# raw bytes to the HF image-classification endpoint and returns the label list.
+_HF_FACE_MODEL = 'trpakov/vit-face-expression'
+_HF_FACE_URL = f'https://router.huggingface.co/hf-inference/models/{_HF_FACE_MODEL}'
+
+
+def _hf_face_classify_sync(image_bytes: bytes) -> List[Dict[str, Any]]:
+    """Blocking POST of a JPEG to the HF image-classification endpoint."""
+    if not _HF_TOKEN:
+        raise RuntimeError('HF_TOKEN is not set on the backend.')
+
+    import urllib.request
+    import urllib.error
+    import time
+
+    headers = {
+        'Authorization': f'Bearer {_HF_TOKEN}',
+        'Content-Type': 'image/jpeg',
+        'Accept': 'application/json',
+        'X-Wait-For-Model': 'true',
+    }
+
+    last_err = None
+    for attempt in range(_HF_CHAT_MAX_RETRIES):
+        try:
+            req = urllib.request.Request(_HF_FACE_URL, data=image_bytes, headers=headers)
+            with urllib.request.urlopen(req, timeout=_HF_CHAT_TIMEOUT) as r:
+                payload = _json.loads(r.read())
+            if isinstance(payload, list) and payload and isinstance(payload[0], list):
+                payload = payload[0]
+            if not isinstance(payload, list):
+                raise RuntimeError(f'Unexpected HF face payload: {payload}')
+            return payload
+        except urllib.error.HTTPError as e:  # type: ignore[attr-defined]
+            last_err = e
+            if e.code in (429, 503):
+                time.sleep(min(5 * (2 ** attempt), 20))
+                continue
+            try:
+                detail = e.read().decode('utf-8', errors='ignore')[:300]
+            except Exception:
+                detail = ''
+            raise RuntimeError(f'HF face HTTP {e.code}: {detail}')
+        except Exception as e:
+            last_err = e
+            time.sleep(1.0 * (2 ** attempt))
+    raise RuntimeError(f'HF face exhausted retries: {last_err}')
+
+
+@app.options('/face-expression')
+async def options_face_expression():
+    return {'message': 'OK'}
+
+
+@app.post('/face-expression')
+async def face_expression(file: UploadFile = File(...)):
+    """Forward a webcam JPEG frame to the HF expression classifier."""
+    MAX_BYTES = 2 * 1024 * 1024  # 2 MB hard cap per frame
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail='Please upload an image.')
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail='Empty image upload.')
+    if len(image_bytes) > MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f'Frame too large. Max {MAX_BYTES // (1024 * 1024)} MB.',
+        )
+    try:
+        labels = await _asyncio.to_thread(_hf_face_classify_sync, image_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'Face classify failed: {e}')
+    return {'labels': labels}
+
+
 @app.on_event("startup")
 async def startup_event():
     _load_hybrid_corpus()

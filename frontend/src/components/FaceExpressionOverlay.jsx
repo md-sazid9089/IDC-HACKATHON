@@ -30,7 +30,7 @@ import {
 } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, AlertCircle, Eye } from 'lucide-react';
-import { hfInference, HFError } from '../services/hfClient';
+import API_URL from '../config';
 
 const EXPRESSION_MODEL = 'trpakov/vit-face-expression';
 const SAMPLE_INTERVAL_MS = 3000;
@@ -251,9 +251,23 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
     inFlightRef.current = true;
     setUpdating(true);
     try {
-      const buf = await blob.arrayBuffer();
-      const raw = await hfInference(EXPRESSION_MODEL, buf, 'image-classification');
-      const list = Array.isArray(raw?.[0]) ? raw[0] : raw;
+      // Send the JPEG frame to the backend proxy, which forwards it to
+      // trpakov/vit-face-expression on HF. Keeps HF_TOKEN server-side.
+      const apiUrl = API_URL.replace(/\/+$/, '');
+      const form = new FormData();
+      form.append('file', blob, 'frame.jpg');
+      const resp = await fetch(`${apiUrl}/face-expression`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!resp.ok) {
+        const detail = await resp.text();
+        const err = new Error(detail || `face-expression ${resp.status}`);
+        err.status = resp.status;
+        throw err;
+      }
+      const data = await resp.json();
+      const list = Array.isArray(data?.labels) ? data.labels : [];
 
       if (Array.isArray(list) && list.length) {
         // Log the dominant label for the cumulative summary (powers
@@ -274,19 +288,13 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
                    type: 'warning', icon: 'Eye' });
       }
     } catch (err) {
-      if (err instanceof HFError && err.status === 401) {
-        setCamError('Hugging Face token missing or invalid. Set VITE_HF_API_TOKEN.');
-        stopAll();
-        setCameraStarted(false);
-      } else {
-        // Non-401 — surface so the user knows something failed, but keep
-        // sampling. Most are 503 cold-starts that resolve in a few seconds.
-        const msg = err instanceof HFError
-          ? `HF ${err.status}: ${err.message}`
-          : `${err?.name || 'Error'}: ${err?.message || err}`;
-        console.warn('[FaceExpressionOverlay] HF call failed:', msg);
-        setHfError(msg.slice(0, 120));
-      }
+      // Surface so the user knows something failed, but keep sampling.
+      // Most are HF cold-starts (502 from our proxy) that resolve in a few seconds.
+      const msg = err?.status
+        ? `Backend ${err.status}: ${(err.message || '').slice(0, 100)}`
+        : `${err?.name || 'Error'}: ${err?.message || err}`;
+      console.warn('[FaceExpressionOverlay] backend call failed:', msg);
+      setHfError(msg.slice(0, 140));
     } finally {
       inFlightRef.current = false;
       setUpdating(false);

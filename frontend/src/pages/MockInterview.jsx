@@ -16,12 +16,18 @@ import {
   TrendingUp,
   Clock,
   CheckCircle,
+  CheckCircle2,
   AlertCircle,
   Video,
   MessageSquare,
   BookOpen,
   Award,
-  History
+  History,
+  Brain,
+  Camera,
+  ChevronRight,
+  Star,
+  Quote
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { 

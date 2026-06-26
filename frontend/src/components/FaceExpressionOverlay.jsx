@@ -48,6 +48,20 @@ const MIN_FRAME_CONFIDENCE = 0.35;
 // Allow the same tip to re-emit after this many ms so good behaviour is
 // reinforced over a long interview instead of fired exactly once.
 const TIP_REEMIT_MS = 20_000;
+// Per-user baseline: average the first N high-confidence frames to learn
+// the candidate's RESTING expression. Subsequent coaching warns only when
+// the smoothed signal deviates meaningfully from baseline (BASELINE_DELTA).
+// This stops naturally serious / soft-spoken candidates from being told to
+// "smile more" when their face was never sad in the first place.
+const BASELINE_FRAMES = 3;
+const BASELINE_DELTA = 0.15;        // +15 pp over baseline = real change
+// Temporal hysteresis: a warning tip requires the smoothed window to land
+// in the warning state for HYSTERESIS_REPEATS consecutive reads before
+// firing. Positive / info tips fire immediately (no penalty for warmth).
+const HYSTERESIS_REPEATS = 2;
+// Pixel-variance threshold for the "is anything in front of the camera?"
+// presence gate. A blank wall scores ~5-50; a face/scene scores 800+.
+const PRESENCE_VARIANCE_THRESHOLD = 250;
 
 function isInsecureContext() {
   if (typeof window === 'undefined') return false;
@@ -79,7 +93,7 @@ function _normalizeScores(hfList) {
   return out;
 }
 
-function _pickRealtimeTip(expressions) {
+function _pickRealtimeTip(expressions, baseline) {
   if (!expressions || Object.keys(expressions).length === 0) {
     return { tip: 'Move closer to the camera — face not detected', type: 'warning', icon: 'Eye' };
   }
@@ -96,6 +110,17 @@ function _pickRealtimeTip(expressions) {
   const surprised = expressions.surprised || expressions.surprise || 0;
   const negativeTotal = sad + fearful + angry + disgusted;
 
+  // Baseline-aware deltas: positive = above the candidate's resting face.
+  // If we don't have a baseline yet, delta == current score (matches old
+  // absolute-threshold behaviour).
+  const b = baseline || {};
+  const deltaSad      = sad      - (b.sad      || 0);
+  const deltaFear     = fearful  - (b.fear     || b.fearful   || 0);
+  const deltaAngry    = angry    - (b.angry    || 0);
+  const deltaDisgust  = disgusted - (b.disgust || b.disgusted || 0);
+  const deltaNegative = deltaSad + deltaFear + deltaAngry + deltaDisgust;
+  const deltaHappy    = happy   - (b.happy   || 0);
+
   // Rank-1 emotion drives the tip. Ties broken in favour of positive labels.
   const ranked = [
     ['happy',     happy],
@@ -108,22 +133,25 @@ function _pickRealtimeTip(expressions) {
   ].sort((a, b) => b[1] - a[1]);
   const [topLabel, topScore] = ranked[0];
 
-  // Strong negative signal → always warn first.
-  if (negativeTotal >= 0.55) {
-    if (fearful >= 0.30 || surprised >= 0.45) {
+  // Strong negative signal → always warn first. We require BOTH absolute
+  // score over the bar AND a baseline-relative deviation so a naturally
+  // serious resting face doesn't trip the warning.
+  if (negativeTotal >= 0.55 && deltaNegative >= BASELINE_DELTA) {
+    if (deltaFear >= 0.20 || surprised >= 0.45) {
       return { tip: 'Take a breath — slow down and speak with intention', type: 'warning', icon: 'AlertCircle' };
     }
-    if (angry >= 0.30 || disgusted >= 0.25) {
+    if (deltaAngry >= 0.20 || deltaDisgust >= 0.15) {
       return { tip: 'Relax your jaw and brow — aim for an open, neutral face', type: 'warning', icon: 'AlertCircle' };
     }
-    if (sad >= 0.30) {
+    if (deltaSad >= 0.20) {
       return { tip: 'Lift your chin slightly and maintain an upright posture', type: 'warning', icon: 'AlertCircle' };
     }
   }
 
   // Positive signals (checked BEFORE neutral so a smiling candidate isn't
-  // overridden by a marginally higher neutral score).
-  if (happy >= 0.50 || (happy >= 0.35 && happy >= neutral * 0.8)) {
+  // overridden by a marginally higher neutral score). Either an absolute
+  // happy score or a meaningful uplift over baseline both count.
+  if (happy >= 0.50 || deltaHappy >= 0.20 || (happy >= 0.35 && happy >= neutral * 0.8)) {
     return { tip: 'Natural warmth showing — keep that confident energy', type: 'positive', icon: 'CheckCircle2' };
   }
   if (topLabel === 'neutral' && topScore >= 0.55 && negativeTotal < 0.25) {
@@ -136,7 +164,7 @@ function _pickRealtimeTip(expressions) {
   }
 
   // Mild negative tilt without crossing the strong-signal bar.
-  if (negativeTotal >= 0.30) {
+  if (negativeTotal >= 0.30 && deltaNegative >= BASELINE_DELTA) {
     return { tip: 'Soften your expression — relax the brow and breathe', type: 'warning', icon: 'AlertCircle' };
   }
 
@@ -229,9 +257,99 @@ export function getExpressionCoaching(distribution) {
 }
 
 // =====================================================================
-// Canvas: subtle bounding-box overlay drawn in #A855F7 (no text).
+// Lightweight presence + face-detection helpers (no extra dependencies).
+//
+// 1) _hasContentInFrame  : pixel-variance check on a centre patch of the
+//    JPEG canvas. Tells us if there is ANYTHING in front of the camera
+//    (vs. a blank wall / lens cap). Used to fire "no face detected"
+//    locally instead of waiting for the HF model to return a bad result.
+//
+// 2) _detectFaceBox      : Uses the experimental Shape Detection API
+//    (`window.FaceDetector`) when the browser exposes it (Chrome/Edge
+//    desktop behind a flag, Chrome Android by default, Safari 17+).
+//    Returns { x, y, w, h } in video pixel space, or null.
+//
+// Both helpers return synchronously / cheaply enough to run on every
+// capture without adding measurable cost to the 3 s loop.
 // =====================================================================
-function _drawBoundingBox(canvas, video) {
+function _hasContentInFrame(canvas) {
+  if (!canvas) return true; // assume yes if we can't measure
+  const w = canvas.width;
+  const h = canvas.height;
+  if (!w || !h) return true;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  // Sample a 40% × 40% centre patch (where a candidate's face should be).
+  const sw = Math.max(32, Math.floor(w * 0.4));
+  const sh = Math.max(32, Math.floor(h * 0.4));
+  const sx = Math.floor((w - sw) / 2);
+  const sy = Math.floor((h - sh) / 2);
+  let img;
+  try {
+    img = ctx.getImageData(sx, sy, sw, sh).data;
+  } catch {
+    return true; // CORS-tainted canvas etc — don't block sampling
+  }
+  // Compute luminance variance on a stride to keep this fast.
+  let n = 0, sum = 0, sumSq = 0;
+  for (let i = 0; i < img.length; i += 16) {
+    const lum = 0.299 * img[i] + 0.587 * img[i + 1] + 0.114 * img[i + 2];
+    sum   += lum;
+    sumSq += lum * lum;
+    n++;
+  }
+  if (n === 0) return true;
+  const mean = sum / n;
+  const variance = (sumSq / n) - (mean * mean);
+  return variance >= PRESENCE_VARIANCE_THRESHOLD;
+}
+
+// Cached detector instance — constructed lazily, reused across frames.
+let _faceDetectorInstance = null;
+let _faceDetectorTried = false;
+function _getFaceDetector() {
+  if (_faceDetectorTried) return _faceDetectorInstance;
+  _faceDetectorTried = true;
+  try {
+    if (typeof window !== 'undefined' && 'FaceDetector' in window) {
+      // eslint-disable-next-line no-undef
+      _faceDetectorInstance = new window.FaceDetector({
+        fastMode: true,
+        maxDetectedFaces: 1,
+      });
+    }
+  } catch {
+    _faceDetectorInstance = null;
+  }
+  return _faceDetectorInstance;
+}
+
+async function _detectFaceBox(canvas) {
+  const detector = _getFaceDetector();
+  if (!detector || !canvas) return null;
+  try {
+    const faces = await detector.detect(canvas);
+    if (!faces || faces.length === 0) return null;
+    // Pick the largest face (the candidate, not a poster on the wall).
+    let best = faces[0];
+    let bestArea = best.boundingBox.width * best.boundingBox.height;
+    for (const f of faces) {
+      const a = f.boundingBox.width * f.boundingBox.height;
+      if (a > bestArea) { best = f; bestArea = a; }
+    }
+    const bb = best.boundingBox;
+    return { x: bb.x, y: bb.y, w: bb.width, h: bb.height };
+  } catch {
+    return null;
+  }
+}
+
+// =====================================================================
+// Canvas: bounding-box overlay drawn in #A855F7 (no text).
+// If `bbox` is supplied (from _detectFaceBox), the rectangle follows the
+// real face. Otherwise we fall back to a centred reference frame so the
+// overlay never disappears entirely.
+// =====================================================================
+function _drawBoundingBox(canvas, video, bbox) {
   if (!canvas || !video) return;
   const rect = video.getBoundingClientRect();
   canvas.width  = rect.width  || video.videoWidth  || 640;
@@ -240,15 +358,26 @@ function _drawBoundingBox(canvas, video) {
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Estimated face area — centered, ~50% wide, ~75% tall.
-  const x = canvas.width  * 0.25;
-  const y = canvas.height * 0.10;
-  const w = canvas.width  * 0.50;
-  const h = canvas.height * 0.75;
+  let x, y, w, h;
+  if (bbox && video.videoWidth && video.videoHeight) {
+    // Real face bbox is in video pixel space; scale to displayed size.
+    const scaleX = canvas.width  / video.videoWidth;
+    const scaleY = canvas.height / video.videoHeight;
+    x = bbox.x * scaleX;
+    y = bbox.y * scaleY;
+    w = bbox.w * scaleX;
+    h = bbox.h * scaleY;
+  } else {
+    // Estimated face area — centred, ~50% wide, ~75% tall.
+    x = canvas.width  * 0.25;
+    y = canvas.height * 0.10;
+    w = canvas.width  * 0.50;
+    h = canvas.height * 0.75;
+  }
   const r = 14;
 
   ctx.strokeStyle = '#A855F7';
-  ctx.lineWidth   = 1.5;
+  ctx.lineWidth   = bbox ? 2.0 : 1.5;
   ctx.beginPath();
   if (typeof ctx.roundRect === 'function') {
     ctx.roundRect(x, y, w, h, r);
@@ -278,8 +407,12 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
   const inFlightRef      = useRef(false);
   const emotionLogRef    = useRef([]);     // every accepted frame's full score map
   const smoothBufferRef  = useRef([]);     // last SMOOTH_WINDOW frames for rolling avg
+  const baselineRef      = useRef(null);   // averaged resting expression
+  const baselineBufRef   = useRef([]);     // first BASELINE_FRAMES collector
+  const warningStreakRef = useRef(0);      // consecutive warning windows
   const lastTipKeyRef    = useRef('');     // dedup onCoachingUpdate calls
   const lastTipAtRef     = useRef(0);      // ms timestamp of last emitted tip
+  const lastBboxRef      = useRef(null);   // last detected face bbox
 
   const [tipQueue,      setTipQueue]      = useState([]); // [{ tip, type, icon, addedAt }]
   const [, _setTick]    = useState(0);                    // ticker for fade re-render
@@ -340,6 +473,22 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
     canvas.height = video.videoHeight || 480;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+    // Local presence gate: if the centre of the frame is flat/blank, skip
+    // the HF round-trip entirely and tell the user to come back into view.
+    // This is far more reliable than waiting for HF to return uncertain scores.
+    if (!_hasContentInFrame(canvas)) {
+      setFaceVisible(false);
+      lastBboxRef.current = null;
+      _drawBoundingBox(overlayCanvasRef.current, videoRef.current, null);
+      _pushTip({ tip: 'Move closer to the camera — face not detected', type: 'warning', icon: 'Eye' });
+      return;
+    }
+
+    // Real face bbox via Shape Detection API where available. Cheap async
+    // call; falls back to a centred reference frame when unsupported.
+    const bbox = await _detectFaceBox(canvas);
+    lastBboxRef.current = bbox;
+
     const blob = await new Promise((res) => canvas.toBlob(res, 'image/jpeg', 0.8));
     if (!blob) return;
 
@@ -365,16 +514,13 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
       const list = Array.isArray(data?.labels) ? data.labels : [];
 
       if (Array.isArray(list) && list.length) {
-        setHfError(null); // clear any stale error indicator
+        setHfError(null);
 
-        // Confidence gate: skip frames where the model is undecided. ViT's
-        // top-1 score on a clean, well-lit face is usually 0.6+; anything
-        // below MIN_FRAME_CONFIDENCE is almost certainly noise.
+        // Confidence gate: skip frames where the model is undecided.
         const topScore = Math.max(...list.map((x) => x?.score ?? 0));
         if (topScore < MIN_FRAME_CONFIDENCE) {
-          // Don't push a tip, don't pollute the log — just keep sampling.
           setFaceVisible(true);
-          _drawBoundingBox(overlayCanvasRef.current, videoRef.current);
+          _drawBoundingBox(overlayCanvasRef.current, videoRef.current, bbox);
           return;
         }
 
@@ -383,6 +529,16 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
         const expressions = _normalizeScores(list);
         emotionLogRef.current.push({ scores: expressions, dominant: list[0] });
 
+        // Baseline calibration: average the first BASELINE_FRAMES valid
+        // frames into the user's resting expression. Subsequent coaching
+        // uses deviations from this baseline instead of absolute thresholds.
+        if (!baselineRef.current) {
+          baselineBufRef.current.push(expressions);
+          if (baselineBufRef.current.length >= BASELINE_FRAMES) {
+            baselineRef.current = _averageDistribution(baselineBufRef.current);
+          }
+        }
+
         // Maintain a rolling smoothing buffer so a single noisy frame can't
         // flip the live tip.
         smoothBufferRef.current.push(expressions);
@@ -390,16 +546,31 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
           smoothBufferRef.current.shift();
         }
 
-        // Draw bounding box (no text per redesign spec).
+        // Draw bounding box (real one if FaceDetector worked, else fallback).
         setFaceVisible(true);
-        _drawBoundingBox(overlayCanvasRef.current, videoRef.current);
+        _drawBoundingBox(overlayCanvasRef.current, videoRef.current, bbox);
 
         if (smoothBufferRef.current.length < SMOOTH_MIN_FRAMES) {
-          // Need at least 2 frames (~6 s) before we trust the average.
           _pushTip({ tip: 'Reading your expression… hold steady', type: 'info', icon: 'Eye' });
+        } else if (!baselineRef.current) {
+          _pushTip({ tip: 'Calibrating to your resting face…', type: 'info', icon: 'Eye' });
         } else {
           const smoothed = _averageDistribution(smoothBufferRef.current);
-          const tip = _pickRealtimeTip(smoothed);
+          const tip = _pickRealtimeTip(smoothed, baselineRef.current);
+
+          // Temporal hysteresis: warnings must persist for HYSTERESIS_REPEATS
+          // consecutive smoothed windows before firing. Positive / info tips
+          // bypass hysteresis so good behaviour is reinforced immediately.
+          if (tip.type === 'warning') {
+            warningStreakRef.current += 1;
+            if (warningStreakRef.current < HYSTERESIS_REPEATS) {
+              // Hold the tip back this round; show a neutral holding pattern.
+              _pushTip({ tip: 'Hold your position — looking good', type: 'positive', icon: 'CheckCircle2' });
+              return;
+            }
+          } else {
+            warningStreakRef.current = 0;
+          }
           _pushTip(tip);
         }
       } else {
@@ -424,6 +595,10 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
     setCamError(null);
     emotionLogRef.current = [];
     smoothBufferRef.current = [];
+    baselineRef.current = null;
+    baselineBufRef.current = [];
+    warningStreakRef.current = 0;
+    lastBboxRef.current = null;
     lastTipKeyRef.current = '';
     lastTipAtRef.current = 0;
     setTipQueue([]);

@@ -2214,11 +2214,8 @@ async def interview_evaluate(req: Dict[str, Any]):
             'improvements': [str(s)[:200] for s in improvements][:5],
         }
         if has_emotion:
-            out['expression_feedback'] = (
-                'Your answer was strong but stress showed in your '
-                'expression \u2014 practice this topic until your face '
-                'matches your knowledge.'
-                if (negative_pct or 0) >= 30 else None
+            out['expression_feedback'] = _build_expression_feedback(
+                negative_pct, dominant_emotion, presence_score,
             )
         return out
 
@@ -2230,12 +2227,53 @@ async def interview_evaluate(req: Dict[str, Any]):
         'improvements': ['Provide more specific examples in your answer.'],
     }
     if has_emotion:
-        out['expression_feedback'] = (
-            'Your answer was strong but stress showed in your expression '
-            '\u2014 practice this topic until your face matches your knowledge.'
-            if (negative_pct or 0) >= 30 else None
+        out['expression_feedback'] = _build_expression_feedback(
+            negative_pct, dominant_emotion, presence_score,
         )
     return out
+
+
+def _build_expression_feedback(
+    negative_pct: 'float | None',
+    dominant_emotion: 'str | None',
+    presence_score: 'float | None',
+) -> 'str | None':
+    """Three-tier multimodal feedback string.
+
+    Tiers (matches the matrix in the spec):
+      * High stress      \u2014 negativePct >= 40
+      * Moderate         \u2014 negativePct >= 20
+      * Excellent        \u2014 happy dominant OR presence >= 75 (low stress)
+    Returns None when no tier matches (composed but unremarkable session).
+    """
+    neg = negative_pct or 0
+    pres = presence_score or 0
+    if neg >= 40:
+        return (
+            f'Your answer showed solid knowledge but your expression '
+            f'indicated high stress ({int(neg)}% tense frames). Practice '
+            f'this topic until your face reflects the same confidence '
+            f'your words convey \u2014 composure under pressure is itself a '
+            f'valued skill interviewers assess.'
+        )
+    if neg >= 20:
+        return (
+            f'Good answer with mostly composed delivery. Mild tension '
+            f'showed in {int(neg)}% of frames \u2014 common for this type of '
+            f'question. A few more practice sessions on similar topics '
+            f'will bring your expression fully in line with your strong '
+            f'content.'
+        )
+    if dominant_emotion == 'happy' or pres >= 75:
+        return (
+            f'Excellent multimodal performance \u2014 your confident '
+            f'expression reinforced your answer content. A presence score '
+            f'of {int(pres)}/100 signals strong nonverbal communication '
+            f'that interviewers respond to positively and remember after '
+            f'the interview ends.'
+        )
+    return None
+
 
 
 @app.post("/evaluate-interview-answer")

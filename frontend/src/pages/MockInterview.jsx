@@ -624,6 +624,13 @@ const MockInterview = () => {
     setLoading(true);
     try {
       const apiUrl = API_URL.replace(/\/+$/, '');
+      // Emotion fields are passed through whenever they are available.
+      // In the current pipeline these are populated only AFTER endInterview
+      // runs finalize() on FaceExpressionOverlay, so per-question evals
+      // here will see them as null — the backend gracefully ignores nulls
+      // and the response’s expression_feedback comes back as null too.
+      // The wiring is in place for a future per-question snapshot call.
+      const curQTrend = (questionTrends && questionTrends[questionNumber]) || null;
       const res = await fetch(`${apiUrl}/interview/evaluate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -633,6 +640,18 @@ const MockInterview = () => {
           role: selectedRole,
           difficulty,
           profile: interviewProfile || {},
+          // Optional multimodal payload — all null during per-question evals.
+          emotionSummary: emotionSummary ? {
+            dominantEmotion: emotionSummary.dominant,
+            negativePct:     emotionSummary.negativePct,
+            dominantPct:     emotionSummary.dominantPct,
+            totalFrames:     emotionSummary.totalFrames,
+          } : null,
+          presenceScore:    presenceData?.presenceScore  ?? null,
+          dominantEmotion:  emotionSummary?.dominant     ?? null,
+          negativePct:      emotionSummary?.negativePct  ?? null,
+          // Per-question trend snapshot (if we ever get one before eval).
+          currentQuestionEmotion: curQTrend,
         }),
       });
       if (!res.ok) {
@@ -1731,6 +1750,18 @@ const MockInterview = () => {
                         <p className="text-sm text-white/80 leading-relaxed">
                           {feedback.feedback}
                         </p>
+                        {/* Multimodal expression insight — only renders when
+                            the backend returned it (i.e. emotion data was sent). */}
+                        {feedback.expression_feedback && (
+                          <div className="mt-3 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                            <p className="text-xs font-semibold text-purple-400 mb-1">
+                              🎭 Expression Insight
+                            </p>
+                            <p className="text-[#B3B3C7] text-sm leading-relaxed">
+                              {feedback.expression_feedback}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     </div>
 

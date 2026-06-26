@@ -168,6 +168,247 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
   return coaching;
 }
 
+// =====================================================================
+// EXPRESSION_TIPS — 7 emotions × 3 confidence tiers × 3 rotating messages.
+// Used by selectExpressionTip() to surface phase-aware coaching text
+// from the live FaceExpressionOverlay feedback loop.
+// =====================================================================
+const EXPRESSION_TIPS = {
+  happy: {
+    high: [
+      "Your face is radiating genuine confidence right now — interviewers notice this energy and it makes a strong positive impression. Keep sustaining it through your answer.",
+      "That authentic expression signals warmth and enthusiasm. You look like someone who actually wants to be here — hiring managers remember that after the interview ends.",
+      "Excellent expression! You are projecting exactly the kind of engaged confidence that top candidates show. This is what interviewers write down in their notes.",
+    ],
+    medium: [
+      "Good positive energy showing on your face. Try to let it come through even more naturally as you speak — let your enthusiasm for this role show fully.",
+      "Your expression shows engagement. Channel that into your voice too — let your excitement about this opportunity come through in both face and words simultaneously.",
+      "Nice warmth in your expression. When you naturally smile while making a key point, it reinforces your confidence and makes your answer far more memorable.",
+    ],
+    low: [
+      "A slight positive expression is emerging — good start. Let it develop more fully so the interviewer can clearly read your enthusiasm and genuine interest in this role.",
+      "Your face is hinting at warmth. Do not hold back — genuine positive expression builds immediate rapport that carries through the entire interview.",
+      "Mild positive cue detected. Lean into it — a fuller expression of enthusiasm will make your answer land with significantly more impact on the interviewer.",
+    ],
+  },
+  neutral: {
+    high: [
+      "Your face is very flat and difficult to read right now. Even during a technical answer, try raising your eyebrows slightly or nodding — it shows active engagement rather than blankness to the interviewer.",
+      "Sustained neutral expression can read as disinterest or concealed nerves to an interviewer who cannot hear your thoughts. Try adding subtle facial movement — a nod, a slight lean, a purposeful look that signals you are invested.",
+      "You look composed but emotionally absent on camera. Interviewers form lasting impressions within seconds — vary your expression to signal that you are genuinely passionate about what you are saying.",
+    ],
+    medium: [
+      "You look calm and composed — that is professionally strong. Just ensure your voice is carrying the engagement your face is not currently showing. Your tone and pacing need to compensate here.",
+      "Neutral reads as professional but on camera it can feel flat to the interviewer. Try a subtle nod when making your strongest point — it signals conviction without being overdone or theatrical.",
+      "You are holding steady composure. Good foundation. Now push slightly toward warmth — a small natural smile or raised brow when emphasizing your key point will make it truly stick.",
+    ],
+    low: [
+      "Slightly neutral but perfectly fine mid-answer. Your voice and words are carrying the weight right now — make sure they are doing the job fully since your face is taking a rest.",
+      "Mild neutrality is totally acceptable when you are focused on content. Just do not let it persist through the entire answer or it may begin to read as disengagement to a perceptive interviewer.",
+      "Composed expression — good for technical precision. When you reach your conclusion, let a brief natural smile or confident nod signal that you stand firmly behind what you just said.",
+    ],
+  },
+  fear: {
+    high: [
+      "Visible stress is showing on your face and interviewers can read it clearly. Pause for one full second right now, exhale slowly through your nose, and lower your shoulders — this physical reset will visibly calm your expression within moments.",
+      "Your face is showing significant anxiety that any interviewer will immediately notice. Take a deliberate breath right now. Nervousness is universal but visibly controlling it is a rare skill that genuinely impresses hiring managers.",
+      "Strong stress signals detected on your face. It is completely acceptable to say 'Let me gather my thoughts for a moment.' That brief pause actually makes you look more thoughtful and measured, not less prepared.",
+    ],
+    medium: [
+      "Some nervousness is showing around your eyes and brow. Try slowing your speech by about twenty percent — when you speak more deliberately you naturally appear more confident and your facial muscles visibly relax.",
+      "Mild stress expression detected. Make deliberate eye contact with the camera for two full seconds — this simple act resets your facial tension and projects renewed confidence to the interviewer.",
+      "Slight anxiety visible on your face. Try unclenching your jaw and taking a quiet breath through your nose right now. Your face will visibly soften and your next sentence will sound far more controlled and assured.",
+    ],
+    low: [
+      "Very mild tension detected — this is probably just intense focus. Ensure you are breathing regularly because holding your breath creates visible facial tension even when you feel completely calm inside.",
+      "Slight stress cue showing. You are likely perfectly fine but check your posture — slouching amplifies facial tension significantly. Sit up straight and your expression will naturally open up and appear more confident.",
+      "Minor tension detected. This is completely common when concentrating hard on a complex answer. A quiet deliberate exhale between sentences will keep your expression open, engaged, and professional throughout.",
+    ],
+  },
+  sad: {
+    high: [
+      "Your expression looks deflated or disengaged right now, which can seriously undermine even an excellent answer. Lean forward slightly and raise your eyebrows — these two changes immediately signal energy and genuine investment to the interviewer.",
+      "Low energy is showing very clearly on your face. Think actively about why you genuinely want this specific role and let that authentic motivation show through. Interviewers hire people who visibly look like they want to be there.",
+      "Your face looks withdrawn and that is negatively affecting your overall presence. This often signals mental fatigue mid-interview. A small physical shift — sit up, take a breath, make purposeful eye contact — will reset your visible energy immediately.",
+    ],
+    medium: [
+      "Slightly low energy expression detected. Try a subtle forward lean and make your next point with more deliberate, sustained eye contact — these two adjustments alone will shift how the interviewer perceives your engagement level.",
+      "Your expression energy has dipped noticeably. Raise your eyebrows just slightly when making your next key statement — it instantly signals enthusiasm and keeps the interviewer actively engaged with you and your answer.",
+      "Mild disengagement showing on your face. This commonly happens after a long complex answer. End your current point cleanly, take a visible breath, and begin your next sentence with clearly renewed facial energy and purpose.",
+    ],
+    low: [
+      "Very slight energy dip detected — you may simply be thinking deeply. Ensure your face reflects your genuine engagement with the question so the interviewer reads active interest rather than fatigue or indifference.",
+      "Minor low-energy cue. Quick effective fix: think right now of one specific thing you genuinely find exciting about this role. That authentic thought will naturally and visibly shift your expression within the next five seconds.",
+      "Subtle expression drop detected. You are likely completely fine but stay consciously aware of keeping your face active — nod, vary your expression naturally, show the interviewer that you are fully present and invested in this conversation.",
+    ],
+  },
+  angry: {
+    high: [
+      "Your expression looks tense or frustrated and this reads as aggression to an interviewer — even if you feel absolutely neither. Consciously unclench your jaw and deliberately soften your brow right now before continuing your answer.",
+      "Strong tension detected in your facial expression. Interviewers cannot know what you are feeling internally — they only see and judge your face. Soften your expression deliberately and purposefully before your next sentence.",
+      "Visible facial tension is showing throughout your face. Take a slow deliberate breath and consciously relax the muscles around your eyes and forehead. A visibly tense face undermines even the most perfectly structured, brilliant answer.",
+    ],
+    medium: [
+      "A slight frown or brow tension is showing. This may genuinely just be deep concentration but it reads as frustration or irritation. Lift your brow slightly and soften your jaw — your entire expression will open up immediately.",
+      "Mild tension detected around your brow area. When you make your next key point, pair it with a small genuine nod rather than a furrowed concentrated look — it projects confident conviction rather than visible strain.",
+      "Some facial tightness detected. Between sentences, briefly release your jaw — let it drop slightly and then close naturally. This simple micro-reset keeps your expression open, professional, and approachable throughout your answer.",
+    ],
+    low: [
+      "Very slight tension detected — almost certainly just deep focus. Stay aware of your jaw specifically; many people clench unconsciously when concentrating intensely. A quick deliberate release will keep your expression relaxed and open.",
+      "Minor brow tension showing. Totally common when thinking through a complex answer. After your next sentence, take one breath and consciously soften your forehead before continuing — it takes less than two seconds.",
+      "Mild expression tightness. You are probably completely fine — just stay consciously aware of keeping your face open and relaxed. Tension in the face amplifies noticeably under camera lighting that video interviews use.",
+    ],
+  },
+  surprise: {
+    high: [
+      "You look visibly caught off guard by this question. It is entirely fine and even respected to say 'That is a great question — let me think for just a moment.' That composed response signals thoughtfulness and self-awareness, not weakness.",
+      "Strong surprise expression detected on your face. Take a full breath and collect yourself before beginning your answer. An interviewer will respect a composed two-second pause far more than a rushed, visibly flustered response.",
+      "Your face showed clear surprise. Own it gracefully by staying calm — allow a small natural smile, take a breath, and begin your answer deliberately. Recovering composure gracefully under pressure is itself a powerful interview signal.",
+    ],
+    medium: [
+      "Eyebrow raise detected — this can read as uncertainty or being underprepared to an observant interviewer. Take one breath, let your expression settle into calm composure, then begin your answer with a steady, confident opening sentence.",
+      "Mild surprise showing on your face. This is a natural reaction when a question lands differently than you expected. Pause briefly, let your expression return to neutral-confident, and then frame your answer clearly and deliberately.",
+      "Surprise cue detected. Quick effective reset: exhale, consciously soften your expression, and start your answer with a brief framing sentence — this buys you a valuable moment of composure and reads as thoughtful rather than caught off guard.",
+    ],
+    low: [
+      "Brief surprise expression — very minor and probably invisible to most human interviewers. Just ensure your very next sentence comes out completely steady and confident so there is absolutely no lingering uncertainty visible.",
+      "Slight eyebrow raise detected. Natural reaction — just stay aware that in video interviews every micro-expression gets amplified by the camera. Move smoothly and deliberately into your answer with a composed, settled face.",
+      "Very mild surprise cue detected. Completely fine — just take one breath before answering and begin with a calm, deliberate opening sentence. Composure recovers remarkably quickly when you are consciously aware of it.",
+    ],
+  },
+  disgust: {
+    high: [
+      "Your expression may be reading as dismissive or closed-off to the interviewer, even if that is genuinely not your intention. Consciously relax your entire face into an open, engaged, neutral expression right now before continuing.",
+      "Strong negative expression detected on your face. Regardless of what you are actually feeling inside, your face is the only signal the interviewer can see and judge. Reset to an open, engaged expression — it takes just one deliberate breath.",
+      "Your facial expression appears closed or negative to an outside observer. This can seriously undermine even your strongest answer. Focus on keeping your face deliberately open and your brow visibly relaxed — let your words carry all the critical thinking.",
+    ],
+    medium: [
+      "Slight negative expression showing on your face. This may simply be concentration but it reads as displeasure or dismissiveness on camera. Consciously lift your expression — a small nod or slight smile will counteract it immediately and effectively.",
+      "Mild closed expression detected. Keep your face deliberately open and inviting when discussing complex or challenging topics — interviewers naturally read facial negativity as a personality and attitude signal, not merely a momentary reaction.",
+      "Some expression tightness showing around your mouth or nose area. Quick effective fix: take a breath, slightly raise the corners of your mouth naturally, and your expression will shift to open and professional within seconds.",
+    ],
+    low: [
+      "Very slight expression shift detected. You are almost certainly fine — just stay aware that camera environments significantly amplify even subtle expressions that would go unnoticed in person. Keep your face deliberately open and inviting.",
+      "Minor expression cue detected. Probably just deep focus on your answer content. Stay consciously aware of keeping your face inviting and open, especially when answering questions that require careful critical or analytical thinking.",
+      "Mild expression detected. Nothing serious at all — just a useful reminder to stay aware of your face as an active communication tool. Open, engaged expressions build genuine rapport even during the most technical or complex answers.",
+    ],
+  },
+};
+
+// Per-call rotating selector. `score` is a 0..1 fractional confidence
+// from FaceExpressionOverlay's median-voted smoothed reading.
+function selectExpressionTip(label, score) {
+  if (!label || !EXPRESSION_TIPS[label]) return null;
+  const tips = EXPRESSION_TIPS[label];
+  let tier;
+  if (score >= 0.78)      tier = 'high';
+  else if (score >= 0.62) tier = 'medium';
+  else                    tier = 'low';
+  const pool = tips[tier];
+  // Rotate through 3 messages so same tip never repeats back to back
+  const idx = Math.floor(Date.now() / 25000) % pool.length;
+  return pool[idx];
+}
+
+// Phase-aware prefix prepended to live coaching tips so the same emotion
+// reads differently while listening vs. answering vs. between questions.
+const PHASE_PREFIX = {
+  listening:  'Stay focused \u2014 ',
+  thinking:   'While you think \u2014 ',
+  answering:  'As you answer \u2014 ',
+  transition: 'Between questions \u2014 ',
+  idle:       '',
+};
+
+// Bucket every accepted frame by its questionIndex and synthesise a
+// per-question narrative + dominant emotion + stress percentage. Drives
+// the post-interview "Emotional Journey Per Question" card.
+function computePerQuestionTrend(emotionLog, totalQuestions) {
+  if (!emotionLog || emotionLog.length === 0) return [];
+  const NEGATIVE = new Set(['fear', 'sad', 'angry', 'disgust']);
+  const POSITIVE = new Set(['happy']);
+  const byQuestion = {};
+  for (const entry of emotionLog) {
+    const q = entry.questionIndex ?? 0;
+    if (!byQuestion[q]) byQuestion[q] = [];
+    byQuestion[q].push(entry);
+  }
+  const trends = [];
+  for (let i = 0; i < totalQuestions; i++) {
+    const frames = byQuestion[i] || [];
+    if (frames.length === 0) { trends.push(null); continue; }
+    const total    = frames.length;
+    const negCount = frames.filter((f) => NEGATIVE.has(f.label)).length;
+    const posCount = frames.filter((f) => POSITIVE.has(f.label)).length;
+    const negPct   = Math.round((negCount / total) * 100);
+    const posPct   = Math.round((posCount / total) * 100);
+    const freq     = {};
+    for (const f of frames) freq[f.label] = (freq[f.label] || 0) + 1;
+    const dominant = Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])[0][0];
+    let narrative = '';
+    if (negPct >= 40)
+      narrative = `High stress detected (${negPct}% tense expressions) \u2014 this topic challenged your composure. Practice it until your face matches your knowledge level.`;
+    else if (negPct >= 20)
+      narrative = `Some tension detected (${negPct}% negative expressions) \u2014 mostly composed with occasional nerves showing through. Good recovery overall.`;
+    else if (posPct >= 50)
+      narrative = `Strong confident delivery \u2014 positive and engaged throughout (${posPct}% confident expressions). This is your best answer in terms of presence.`;
+    else
+      narrative = 'Composed and steady delivery \u2014 good consistent emotional control maintained across this entire answer.';
+    trends.push({ questionIndex: i, dominant, negPct, posPct, narrative, frameCount: total });
+  }
+  return trends;
+}
+
+// Roll the final emotion distribution + per-question trends into a single
+// 0-100 "Interview Presence Score" with three subscores and an
+// improvement-arc bonus that rewards candidates whose composure
+// strengthened across the session.
+function computePresenceScore(summary, questionTrends) {
+  if (!summary) return null;
+  const { negativePct = 0, distribution = {} } = summary;
+  const happyPct   = distribution.happy   || 0;
+  const neutralPct = distribution.neutral || 0;
+  const confidenceScore = Math.min(100,
+    Math.round(happyPct + neutralPct * 0.6));
+  const composureScore = Math.min(100,
+    Math.max(0, Math.round(100 - negativePct * 2.2)));
+  const flatnessPenalty = neutralPct > 85 ? (neutralPct - 85) * 1.5 : 0;
+  const engagementScore = Math.min(100,
+    Math.max(0, Math.round(100 - flatnessPenalty + happyPct * 0.3)));
+  let trendBonus = 0;
+  if (questionTrends && questionTrends.length >= 3) {
+    const valid = questionTrends.filter(Boolean);
+    if (valid.length >= 3) {
+      const third = Math.max(1, Math.floor(valid.length / 3));
+      const firstThird = valid.slice(0, third);
+      const lastThird  = valid.slice(-third);
+      const avgFirst = firstThird.reduce((a, b) => a + b.negPct, 0) / firstThird.length;
+      const avgLast  = lastThird.reduce((a, b) => a + b.negPct, 0) / lastThird.length;
+      trendBonus = Math.round((avgFirst - avgLast) * 0.5);
+    }
+  }
+  const presenceScore = Math.min(100, Math.max(0,
+    Math.round(
+      0.35 * confidenceScore +
+      0.30 * composureScore +
+      0.20 * engagementScore +
+      0.15 * (50 + trendBonus)
+    )
+  ));
+  return {
+    presenceScore,
+    confidenceScore,
+    composureScore,
+    engagementScore,
+    trendBonus,
+    grade:
+      presenceScore >= 85 ? 'Excellent' :
+      presenceScore >= 70 ? 'Good' :
+      presenceScore >= 55 ? 'Developing' : 'Needs Work',
+  };
+}
+
 // ── CHANGE 4: Overall coaching summary pure function ─────────────────────────
 function getOverallCoachingSummary(wpm, fillerCount, pauseSeconds, emotions) {
   const issues = [];
@@ -261,6 +502,16 @@ const MockInterview = () => {
   const [interviewEnded, setInterviewEnded] = useState(false);
   // Live emotions distribution accumulated from FaceExpressionOverlay updates
   const liveEmotionsRef = useRef(null);
+  // Per-question emotional-journey trends + composite presence score —
+  // populated by computePerQuestionTrend() / computePresenceScore() at
+  // end-of-interview from FaceExpressionOverlay's rawLog.
+  const [questionTrends, setQuestionTrends] = useState([]);
+  const [presenceData,   setPresenceData]   = useState(null);
+  // Phase-aware coaching: idle | listening | thinking | answering | transition
+  const [interviewPhase, setInterviewPhase] = useState('idle');
+  // Synced ref so FaceExpressionOverlay can tag every accepted frame with
+  // the question it belongs to (drives the per-question trend card).
+  const currentQuestionIndexRef = useRef(0);
 
   // Detect SpeechRecognition support once on mount (silent fallback).
   useEffect(() => {
@@ -368,6 +619,8 @@ const MockInterview = () => {
       return;
     }
 
+    // Phase: answer submitted, switching to transition while feedback arrives.
+    setInterviewPhase('transition');
     setLoading(true);
     try {
       const apiUrl = API_URL.replace(/\/+$/, '');
@@ -455,6 +708,11 @@ const MockInterview = () => {
     setCoachingSummary(null);
     setInterviewEnded(false);
     liveEmotionsRef.current = null;
+    // Reset per-question trend tracking + phase
+    setQuestionTrends([]);
+    setPresenceData(null);
+    currentQuestionIndexRef.current = 0;
+    setInterviewPhase('listening');
 
     // Fetch the candidate profile from Firestore and snapshot it so the
     // backend can use it for RAG retrieval on every /interview/* call.
@@ -472,9 +730,16 @@ const MockInterview = () => {
 
   // Next question
   const nextQuestion = useCallback(() => {
-    setQuestionNumber(prev => prev + 1);
+    setQuestionNumber((prev) => {
+      const next = prev + 1;
+      // Keep the synced ref aligned so FaceExpressionOverlay tags every
+      // future accepted frame with the right question index.
+      currentQuestionIndexRef.current = next;
+      return next;
+    });
     setUserAnswer('');
     setFeedback(null);
+    setInterviewPhase('listening');
     generateQuestion();
   }, [generateQuestion]);
 
@@ -488,7 +753,14 @@ const MockInterview = () => {
       setExpressionCoaching(coaching);
       // Store latest emotions for coaching summary
       liveEmotionsRef.current = summary.distribution;
+      // ── Per-question trends + composite presence score (Tasks 9-11) ──
+      const log = summary.rawLog || [];
+      const totalForTrend = Math.max(questionNumber + 1, 1);
+      const trends = computePerQuestionTrend(log, totalForTrend);
+      setQuestionTrends(trends);
+      setPresenceData(computePresenceScore(summary, trends));
     }
+    setInterviewPhase('idle');
     try {
       const avgScore = sessionScore / Math.max(questionNumber + 1, 1);
       const totalQuestions = questionNumber + 1;
@@ -649,6 +921,8 @@ const MockInterview = () => {
       recognitionRef.current = rec;
       rec.start();
       setIsRecording(true);
+      // Phase: candidate is now actively answering on camera.
+      setInterviewPhase('answering');
       toast.success('Listening\u2026 speak your answer');
     } catch (err) {
       // Browser refused construction — silent fallback.
@@ -780,6 +1054,79 @@ const MockInterview = () => {
                 animate={{ opacity: 1, y: 0 }}
                 className="lg:col-span-2 space-y-4"
               >
+                {/* Interview Presence Score \u2014 sits ABOVE the legacy emotion
+                    summary so it leads the post-interview results section. */}
+                {presenceData && (
+                  <div className="neon-card p-5 mt-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-white font-semibold flex items-center gap-2">
+                        <span>\ud83c\udfaf</span> Interview Presence Score
+                      </h3>
+                      <div className="text-right">
+                        <span className="text-3xl font-bold text-purple-400">
+                          {presenceData.presenceScore}
+                        </span>
+                        <span className="text-[#B3B3C7] text-sm">/100</span>
+                        <div className={`text-xs font-semibold mt-0.5 ${
+                          presenceData.grade === 'Excellent' ? 'text-green-400' :
+                          presenceData.grade === 'Good'      ? 'text-purple-400' :
+                          presenceData.grade === 'Developing'? 'text-yellow-400' :
+                                                              'text-red-400'
+                        }`}>{presenceData.grade}</div>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-[#B3B3C7]">\ud83d\ude0a Confidence Signal</span>
+                          <span className="text-white font-semibold">
+                            {presenceData.confidenceScore}/100
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-green-400 rounded-full transition-all duration-700"
+                            style={{ width: `${presenceData.confidenceScore}%` }} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-[#B3B3C7]">\ud83e\udde0 Composure Under Pressure</span>
+                          <span className="text-white font-semibold">
+                            {presenceData.composureScore}/100
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-purple-400 rounded-full transition-all duration-700"
+                            style={{ width: `${presenceData.composureScore}%` }} />
+                        </div>
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-[#B3B3C7]">\u26a1 Engagement Consistency</span>
+                          <span className="text-white font-semibold">
+                            {presenceData.engagementScore}/100
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div className="h-full bg-blue-400 rounded-full transition-all duration-700"
+                            style={{ width: `${presenceData.engagementScore}%` }} />
+                        </div>
+                      </div>
+                      {presenceData.trendBonus !== 0 && (
+                        <div className={`text-xs rounded-lg px-3 py-2 mt-1 ${
+                          presenceData.trendBonus > 0
+                            ? 'bg-green-500/10 text-green-400'
+                            : 'bg-yellow-500/10 text-yellow-400'
+                        }`}>
+                          {presenceData.trendBonus > 0
+                            ? `\ud83d\udcc8 Improvement Arc: +${presenceData.trendBonus} pts \u2014 your composure strengthened as the interview progressed. Excellent self-regulation under sustained pressure.`
+                            : `\ud83d\udcc9 Fatigue Arc: ${presenceData.trendBonus} pts \u2014 stress increased toward the end. Practice sustaining calm composure across longer multi-question interviews.`
+                          }
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {metricsEnvelope && (
                   <ReasoningCard
                     title="Voice analysis"
@@ -872,7 +1219,56 @@ const MockInterview = () => {
                   </p>
                 </div>
 
-                {/* ── CHANGE 2: Expression Coaching on setup screen ── */}
+                {/* Per-question emotional-journey trends \u2014 sits directly
+                    below the Expression Analysis card. */}
+                {questionTrends.length > 0 && (
+                  <div className="neon-card p-5 mt-4">
+                    <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                      <span>\ud83d\udcca</span> Emotional Journey Per Question
+                    </h3>
+                    <div className="space-y-3">
+                      {questionTrends.map((trend, i) => trend && (
+                        <div key={i} className="bg-white/5 rounded-lg p-3">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-purple-400 text-sm font-semibold">
+                              Question {i + 1}
+                            </span>
+                            <span className="text-xs text-[#B3B3C7]">
+                              {trend.frameCount} frame{trend.frameCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="text-white text-sm capitalize">
+                              {trend.dominant === 'happy'    ? '\ud83d\ude0a' :
+                               trend.dominant === 'neutral'  ? '\ud83d\ude10' :
+                               trend.dominant === 'fear'     ? '\ud83d\ude28' :
+                               trend.dominant === 'sad'      ? '\ud83d\ude22' :
+                               trend.dominant === 'angry'    ? '\ud83d\ude20' :
+                               trend.dominant === 'surprise' ? '\ud83d\ude2e' :
+                               trend.dominant === 'disgust'  ? '\ud83e\udd22' : '\ud83d\ude10'
+                              } {trend.dominant}
+                            </span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              trend.negPct >= 40
+                                ? 'bg-red-500/20 text-red-400'
+                                : trend.negPct >= 20
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-green-500/20 text-green-400'
+                            }`}>
+                              {trend.negPct >= 40 ? 'High stress' :
+                               trend.negPct >= 20 ? 'Some tension' : 'Composed'}
+                            </span>
+                          </div>
+                          <p className="text-[#B3B3C7] text-xs leading-relaxed">
+                            {trend.narrative}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* \u2500\u2500 CHANGE 2: Expression Coaching on setup screen \u2500\u2500 */}
                 {expressionCoaching.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-[#B3B3C7] text-xs font-semibold uppercase tracking-wide">
@@ -1451,6 +1847,7 @@ const MockInterview = () => {
               <FaceExpressionOverlay
                 ref={faceOverlayRef}
                 active={interviewStarted}
+                currentQuestionIndexRef={currentQuestionIndexRef}
               />
 
               {/* End-of-session coaching summary — only renders after End Interview.

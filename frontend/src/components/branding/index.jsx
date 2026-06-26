@@ -261,38 +261,74 @@ export function AILoading({
 
 // =====================================================================
 // BrandStrip — landing-page strip with "Built for / Powered by / Organized
-// by" attribution. Elegant, NOT giant.
+// by" attribution. Elegant, premium, modern, and beautifully glassmorphic.
 // =====================================================================
 export function BrandStrip({ className = '' }) {
-  const item = (label, logo, alt, height = 32) => (
-    <div className="flex flex-col items-center gap-2 min-w-0">
+  const item = (label, logo, alt, height = 32, glowColor = 'rgba(168,85,247,0.2)') => (
+    <div 
+      className="group relative flex flex-col items-center gap-3 py-4 px-6 sm:px-8 rounded-2xl transition-all duration-300 select-none overflow-hidden"
+      style={{
+        background: 'linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.005) 100%)',
+        border: '1px solid rgba(255,255,255,0.04)',
+        boxShadow: '0 4px 20px rgba(10,8,30,0.3)',
+        backdropFilter: 'blur(10px)',
+      }}
+    >
+      {/* Dynamic background glow ring on hover */}
+      <div 
+        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
+        style={{
+          background: `radial-gradient(circle at center, ${glowColor} 0%, rgba(0,0,0,0) 70%)`,
+        }}
+      />
+      {/* Subtle border highlight on hover */}
+      <div 
+        className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+        style={{
+          border: '1px solid rgba(168, 85, 247, 0.25)',
+          boxShadow: `0 0 16px ${glowColor}`,
+        }}
+      />
+
       <span
-        className="text-[10px] font-medium uppercase tracking-[0.22em] text-white/40"
+        className="text-[9px] font-bold uppercase tracking-[0.25em] text-white/35 group-hover:text-white/60 transition-colors duration-300"
       >
         {label}
       </span>
-      <img
-        src={logo}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        style={{ height: `${height}px`, width: 'auto', maxWidth: '180px' }}
-        className="object-contain opacity-90 hover:opacity-100 transition-opacity"
-      />
+      <div className="relative flex items-center justify-center h-[46px] w-[180px]">
+        <img
+          src={logo}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          style={{ height: `${height}px`, width: 'auto' }}
+          className="object-contain opacity-75 group-hover:opacity-100 group-hover:scale-105 transition-all duration-300 filter drop-shadow-[0_2px_8px_rgba(0,0,0,0.3)]"
+        />
+      </div>
     </div>
   );
+
   return (
     <div
-      className={`flex flex-wrap items-center justify-center gap-6 sm:gap-12 py-6 px-4 rounded-2xl border ${className}`}
+      className={`flex flex-wrap items-center justify-center gap-4 sm:gap-6 py-6 px-6 rounded-3xl border relative ${className}`}
       style={{
-        background: 'rgba(17, 21, 43, 0.55)',
-        borderColor: 'rgba(168, 85, 247, 0.12)',
-        backdropFilter: 'blur(6px)',
+        background: 'linear-gradient(135deg, rgba(17, 21, 43, 0.45) 0%, rgba(8, 10, 24, 0.65) 100%)',
+        borderColor: 'rgba(168, 85, 247, 0.08)',
+        backdropFilter: 'blur(12px)',
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)',
       }}
     >
-      {item('Built for',     CODEFRONT_LOGO,  'CodeFront', 24)}
-      {item('Powered by',    MINDSPARKS_LOGO, 'Mindsparks 26', 34)}
-      {item('Organized by',  AUST_IDC_WHITE,  'AUST IDC', 44)}
+      {/* Top subtle decorative gradient border line */}
+      <div 
+        className="absolute top-0 left-10 right-10 h-[1px]" 
+        style={{
+          background: 'linear-gradient(90deg, rgba(168,85,247,0) 0%, rgba(168,85,247,0.3) 50%, rgba(168,85,247,0) 100%)'
+        }}
+      />
+      
+      {item('Built for',     CODEFRONT_LOGO,  'CodeFront', 24, 'rgba(168, 85, 247, 0.2)')}
+      {item('Powered by',    MINDSPARKS_LOGO, 'Mindsparks 26', 32, 'rgba(245, 158, 11, 0.2)')}
+      {item('Organized by',  AUST_IDC_WHITE,  'AUST IDC', 42, 'rgba(255, 255, 255, 0.15)')}
     </div>
   );
 }

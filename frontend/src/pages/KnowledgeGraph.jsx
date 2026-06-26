@@ -247,6 +247,27 @@ export default function KnowledgeGraph() {
 
   return (
     <div className="min-h-screen" style={{ background: BG }}>
+      <style>
+        {`
+          .knowledge-graph-flow .react-flow__edges,
+          .knowledge-graph-flow .react-flow__edges svg,
+          .knowledge-graph-flow .react-flow__edgelabel-renderer {
+            width: 100% !important;
+            height: 100% !important;
+            max-width: none !important;
+            overflow: visible !important;
+          }
+
+          .knowledge-graph-flow .react-flow__edge-path {
+            stroke-width: 2.5px;
+            filter: drop-shadow(0 0 5px currentColor);
+          }
+
+          .knowledge-graph-flow .react-flow__edge {
+            pointer-events: none;
+          }
+        `}
+      </style>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4">
         <div className="flex items-center gap-3 mb-2">
           <Network className="text-primary glow-icon" size={28} />
@@ -259,6 +280,7 @@ export default function KnowledgeGraph() {
       </div>
 
       <div
+        className="knowledge-graph-flow"
         style={{
           width: '100%',
           height: 'calc(100vh - 200px)',

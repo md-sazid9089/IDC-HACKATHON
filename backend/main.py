@@ -1070,34 +1070,14 @@ async def _dense_score_all(
     query: str,
     corpus: List[Dict],
 ) -> List[float]:
-    """Return one cosine-similarity score per corpus item."""
+    """Return one cosine-similarity score per corpus item.
+
+    Currently disabled: returns neutral zeros so /chat ranks purely on BM25.
+    Re-enable by computing q_emb = _embed(query) and scoring against
+    _ITEM_EMBED_CACHE — kept as a single source of truth for the hybrid
+    pipeline in case dense scoring is turned back on.
+    """
     return [0.0] * len(corpus)
-
-    if q_emb is None:
-        # No embedding possible — return zeros
-        return [0.0] * len(corpus)
-
-    # --- Score each corpus item ---
-    scores = []
-    for item in corpus:
-        item_id = item.get('id') or item.get('title', '')
-        item_emb = _ITEM_EMBED_CACHE.get(item_id)
-        if item_emb is None:
-            # Lazy embed on first request if cache miss
-            try:
-                _m = _get_local_model()
-                if _m is not None:
-                    text = (
-                        item.get('title', '') + '. ' +
-                        ', '.join(item.get('skills', [])) + '. ' +
-                        item.get('description', '')[:200]
-                    )
-                    item_emb = _m.encode(text, normalize_embeddings=True).tolist()
-                    _ITEM_EMBED_CACHE[item_id] = item_emb
-            except Exception:
-                pass
-        scores.append(_cosine(q_emb, item_emb) if item_emb else 0.0)
-    return scores
 
 
 # ── TASK 5 — Hybrid scorer with alpha weighting ───────────────
@@ -2091,4 +2071,4 @@ async def startup_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(_os.getenv("PORT", "7860")))

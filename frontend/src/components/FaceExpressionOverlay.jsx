@@ -515,10 +515,48 @@ function _drawBoundingBox(canvas, video, bbox) {
 }
 
 // =====================================================================
+// Median-emotion helper for the rolling buffer.
+//
+// Given the last few per-frame {label, score} samples, returns the label
+// that won the simple majority vote (>= ceil(N/2) hits) together with the
+// mean score of those winning frames. Returns null when no label has a
+// clear majority — callers should treat that as "don't update the badge
+// yet, keep sampling". The 0.55 confidence gate is applied by the caller.
+// =====================================================================
+function getMedianEmotion(buffer) {
+  if (!buffer || buffer.length === 0) return null;
+  const freq = {};
+  for (const entry of buffer) {
+    freq[entry.label] = (freq[entry.label] || 0) + 1;
+  }
+  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+  const topLabel = sorted[0][0];
+  const topCount = sorted[0][1];
+  if (topCount < Math.ceil(buffer.length * 0.5)) return null;
+  const matchingScores = buffer
+    .filter(e => e.label === topLabel)
+    .map(e => e.score);
+  const avgScore =
+    matchingScores.reduce((a, b) => a + b, 0) / matchingScores.length;
+  return { label: topLabel, score: avgScore };
+}
+
+// Emoji + colour map for the live-emotion overlay badge.
+const EMOTION_META = {
+  happy:    { emoji: '😊' },
+  sad:      { emoji: '😢' },
+  angry:    { emoji: '😠' },
+  fear:     { emoji: '😨' },
+  surprise: { emoji: '😮' },
+  disgust:  { emoji: '🤢' },
+  neutral:  { emoji: '😐' },
+};
+
+// =====================================================================
 // Component
 // =====================================================================
 const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
-  { active, onCoachingUpdate },
+  { active, onCoachingUpdate, currentQuestionIndexRef },
   ref,
 ) {
   const videoRef         = useRef(null);
@@ -528,6 +566,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
   const intervalRef      = useRef(null);
   const inFlightRef      = useRef(false);
   const emotionLogRef    = useRef([]);     // every accepted frame's full score map
+  const rollingBufferRef = useRef([]);     // last 5 {label, score} samples for median vote
   const smoothBufferRef  = useRef([]);     // last SMOOTH_WINDOW frames for rolling avg
   const baselineRef      = useRef(null);   // averaged resting expression
   const baselineBufRef   = useRef([]);     // first BASELINE_FRAMES collector
@@ -548,6 +587,9 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
   const [trackingScore, setTrackingScore] = useState(0);   // 0..1 — detector confidence
   const [calibrated,    setCalibrated]    = useState(false);
   const [faceApiState,  setFaceApiState]  = useState('loading'); // loading | ready | unavailable
+  // Median-smoothed live emotion shown on the overlay badge.
+  // Shape: { label: string, score: number } | null
+  const [liveEmotion,   setLiveEmotion]   = useState(null);
 
   // Kick off face-api lazy load as soon as the component mounts so the
   // models are warm by the time the user clicks "Enable Camera".
@@ -655,11 +697,15 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
         body: form,
       });
       let hfScoresFromList = null;
+      let backendLabelsList = [];
       if (resp.ok) {
         const data = await resp.json();
-        const list = Array.isArray(data?.labels) ? data.labels : [];
-        if (list.length) {
-          hfScoresFromList = _normalizeScores(list);
+        // Backend now returns the full sorted list of {label, score} dicts
+        // (lowercase labels, sorted desc). Keep both the raw list (for the
+        // per-frame fullFrame log) and the normalised dict (for ensemble).
+        backendLabelsList = Array.isArray(data?.labels) ? data.labels : [];
+        if (backendLabelsList.length) {
+          hfScoresFromList = _normalizeScores(backendLabelsList);
           setHfError(null);
         }
       } else {
@@ -693,7 +739,45 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
       if ('surprise' in expressions) expressions.surprised = expressions.surprise;
       if ('disgust'  in expressions) expressions.disgusted = expressions.disgust;
 
-      emotionLogRef.current.push({ scores: expressions });
+      // ---------------------------------------------------------------
+      // Rolling median vote across the last 5 samples for the live badge.
+      // Derives the top {label, score} from the ENSEMBLED distribution
+      // (HF + face-api), excluding the alias keys so neutral/happy/sad/
+      // ... compete on equal footing.
+      // ---------------------------------------------------------------
+      const aliasKeys = new Set(['fearful', 'surprised', 'disgusted']);
+      let medianTopLabel = null;
+      let medianTopScore = 0;
+      for (const [k, v] of Object.entries(expressions)) {
+        if (aliasKeys.has(k)) continue;
+        if (v > medianTopScore) { medianTopScore = v; medianTopLabel = k; }
+      }
+
+      let smoothed = null;
+      if (medianTopLabel) {
+        rollingBufferRef.current = [
+          ...rollingBufferRef.current.slice(-4),
+          { label: medianTopLabel, score: medianTopScore },
+        ];
+        smoothed = getMedianEmotion(rollingBufferRef.current);
+      }
+
+      // Confidence gate — only commit the smoothed emotion to UI + log
+      // when the median-voted score clears 0.55. Below the gate we keep
+      // sampling silently (no badge flicker, no log noise).
+      if (smoothed && smoothed.score > 0.55) {
+        setLiveEmotion(smoothed);
+        emotionLogRef.current.push({
+          label:         smoothed.label,
+          score:         smoothed.score,
+          timestamp:     Date.now(),
+          questionIndex: currentQuestionIndexRef?.current ?? 0,
+          fullFrame:     backendLabelsList,
+          // Keep the original `scores` payload so the score-averaged
+          // _computeSummary path continues to work unchanged.
+          scores:        expressions,
+        });
+      }
 
       // Baseline calibration: first BASELINE_FRAMES valid frames define the
       // user's resting expression.
@@ -747,6 +831,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
   const startCamera = useCallback(async () => {
     setCamError(null);
     emotionLogRef.current = [];
+    rollingBufferRef.current = [];
     smoothBufferRef.current = [];
     baselineRef.current = null;
     baselineBufRef.current = [];
@@ -759,6 +844,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
     setFaceVisible(false);
     setCalibrated(false);
     setTrackingScore(0);
+    setLiveEmotion(null);
 
     if (!navigator?.mediaDevices?.getUserMedia) {
       setCamError('Webcam not available in this browser.');
@@ -860,6 +946,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
       negativePct,
       totalFrames: total,
       distribution,
+      rawLog: [...log], // full per-frame log for per-question analysis
     };
   }
 
@@ -955,6 +1042,21 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
                 <span className="ml-1 text-emerald-300/90 normal-case">· calibrated</span>
               )}
             </div>
+            {/* Bottom-left: live median-smoothed emotion + confidence */}
+            {liveEmotion && (
+              <div
+                className="absolute bottom-3 left-3 flex items-center gap-2 text-xs bg-[#11152B]/80 text-purple-400 border border-purple-900/40 backdrop-blur-sm rounded-md px-2.5 py-1.5"
+                title={`Median-smoothed emotion · ${Math.round((liveEmotion.score || 0) * 100)}% confidence`}
+              >
+                <span className="text-sm leading-none">
+                  {EMOTION_META[liveEmotion.label]?.emoji || '\ud83d\ude10'}
+                </span>
+                <span className="capitalize font-medium">{liveEmotion.label}</span>
+                <span className="text-[10px] opacity-70">
+                  {Math.round((liveEmotion.score || 0) * 100)}%
+                </span>
+              </div>
+            )}
             {/* Bottom-right: manual recalibrate button */}
             <button
               onClick={() => {

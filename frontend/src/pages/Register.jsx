@@ -18,7 +18,7 @@ import {
   Heart,
 } from 'lucide-react';
 
-// 🔥 Firebase imports
+//  Firebase imports
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
   getAuth,
@@ -28,7 +28,7 @@ import {
   signOut,
 } from 'firebase/auth';
 
-// 🔥 Firestore imports
+//  Firestore imports
 import {
   getFirestore,
   doc,
@@ -36,7 +36,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 
-// 🔥 Your Firebase config
+//  Your Firebase config
 const firebaseConfig = {
   apiKey: 'AIzaSyC8za3ZI4m9gUrYsueUum907vpuKzV8H0Q',
   authDomain: 'iiuc25.firebaseapp.com',
@@ -47,7 +47,7 @@ const firebaseConfig = {
   measurementId: 'G-82V42TWJ9J',
 };
 
-// 🔥 Initialize Firebase app & services (safe for hot reloads)
+//  Initialize Firebase app & services (safe for hot reloads)
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -137,7 +137,7 @@ const Register = () => {
     try {
       console.log('Starting signup for:', formData.email);
 
-      // 1️⃣ Create user with email & password
+      // 1⃣ Create user with email & password
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         formData.email,
@@ -145,7 +145,7 @@ const Register = () => {
       );
       console.log('User created:', userCredential.user.email);
 
-      // 2️⃣ Set display name
+      // 2⃣ Set display name
       if (formData.name) {
         await updateProfile(userCredential.user, {
           displayName: formData.name,
@@ -153,7 +153,7 @@ const Register = () => {
         console.log('Display name updated to:', formData.name);
       }
 
-      // 3️⃣ Create Firestore document in collection "ChatBot" with doc ID = email
+      // 3⃣ Create Firestore document in collection "ChatBot" with doc ID = email
       const chatBotDocRef = doc(db, 'ChatBot', formData.email);
       console.log('Writing Firestore doc at ChatBot/' + formData.email);
 
@@ -190,7 +190,7 @@ const Register = () => {
 
       console.log('User profile document successfully created for:', userCredential.user.uid);
 
-      // 4️⃣ NEW: Create document in "All_User" collection with subcollection "Interest"
+      // 4⃣ NEW: Create document in "All_User" collection with subcollection "Interest"
       // Structure: All_User/{email}/Interest/interest
       const interestDocRef = doc(
         db,
@@ -210,7 +210,7 @@ const Register = () => {
       console.log('Interest document successfully created for:', formData.email);
       console.log('Selected interests:', selectedInterests);
 
-      // 5️⃣ Redirect to dashboard
+      // 5⃣ Redirect to dashboard
       navigate('/dashboard');
     } catch (error) {
       console.error('Registration / Firestore error:', error);

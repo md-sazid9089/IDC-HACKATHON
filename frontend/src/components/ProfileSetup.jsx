@@ -100,7 +100,7 @@ const ProfileSetup = ({ initialData = null, onUpdate = null }) => {
   return (
     <div className="neon-card p-6 max-w-3xl mx-auto">
       <h2 className="text-2xl font-bold text-main mb-6 flex items-center gap-2">
-        <span className="text-3xl">🎯</span>
+        <span className="text-3xl"></span>
         Job Matching Profile
       </h2>
 
@@ -154,7 +154,7 @@ const ProfileSetup = ({ initialData = null, onUpdate = null }) => {
         {/* Suggested Skills */}
         <details className="text-sm">
           <summary className="text-muted cursor-pointer hover:text-primary transition-colors">
-            💡 Show suggested skills
+             Show suggested skills
           </summary>
           <div className="flex flex-wrap gap-2 mt-2">
             {suggestedSkills.map((skill, idx) => (
@@ -229,7 +229,7 @@ const ProfileSetup = ({ initialData = null, onUpdate = null }) => {
       {/* Info Box */}
       <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
         <p className="text-sm text-blue-300">
-          ℹ️ <strong>Note:</strong> This information will be used to calculate job match scores on the Job Matches page. 
+          ℹ <strong>Note:</strong> This information will be used to calculate job match scores on the Job Matches page. 
           The more accurate your profile, the better job recommendations you'll receive!
         </p>
       </div>

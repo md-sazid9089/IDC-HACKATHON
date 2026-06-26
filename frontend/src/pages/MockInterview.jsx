@@ -60,7 +60,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
   // WPM coaching
   if (wpm < 80) {
     coaching.push({
-      icon: '🐢',
+      icon: '',
       priority: 'high',
       metric: 'Speaking Rate',
       current: `${wpm} WPM`,
@@ -69,7 +69,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
     });
   } else if (wpm < 110) {
     coaching.push({
-      icon: '⚡',
+      icon: '',
       priority: 'medium',
       metric: 'Speaking Rate',
       current: `${wpm} WPM`,
@@ -78,7 +78,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
     });
   } else if (wpm > 180) {
     coaching.push({
-      icon: '🐇',
+      icon: '',
       priority: 'high',
       metric: 'Speaking Rate',
       current: `${wpm} WPM`,
@@ -87,7 +87,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
     });
   } else if (wpm > 160) {
     coaching.push({
-      icon: '😮💨',
+      icon: '',
       priority: 'medium',
       metric: 'Speaking Rate',
       current: `${wpm} WPM`,
@@ -96,7 +96,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
     });
   } else {
     coaching.push({
-      icon: '✅',
+      icon: '',
       priority: 'good',
       metric: 'Speaking Rate',
       current: `${wpm} WPM`,
@@ -108,7 +108,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
   // Filler word coaching
   if (fillerCount > 8) {
     coaching.push({
-      icon: '🚫',
+      icon: '',
       priority: 'high',
       metric: 'Filler Words',
       current: `${fillerCount} fillers`,
@@ -117,7 +117,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
     });
   } else if (fillerCount > 3) {
     coaching.push({
-      icon: '⚠️',
+      icon: '',
       priority: 'medium',
       metric: 'Filler Words',
       current: `${fillerCount} fillers`,
@@ -126,7 +126,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
     });
   } else {
     coaching.push({
-      icon: '✅',
+      icon: '',
       priority: 'good',
       metric: 'Filler Words',
       current: `${fillerCount} fillers`,
@@ -138,7 +138,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
   // Pause coaching
   if (pauseSeconds > 10) {
     coaching.push({
-      icon: '⏸️',
+      icon: '⏸',
       priority: 'high',
       metric: 'Pause Time',
       current: `${pauseSeconds}s paused`,
@@ -156,7 +156,7 @@ function getVoiceCoaching(wpm, fillerCount, pauseSeconds) {
     });
   } else {
     coaching.push({
-      icon: '✅',
+      icon: '',
       priority: 'good',
       metric: 'Pause Time',
       current: `${pauseSeconds}s paused`,
@@ -535,14 +535,14 @@ const MockInterview = () => {
   }, [interviewEnded]);
 
   const jobRoles = [
-    { value: 'frontend', label: 'Frontend Developer', icon: '💻' },
-    { value: 'backend', label: 'Backend Developer', icon: '⚙️' },
-    { value: 'fullstack', label: 'Full Stack Developer', icon: '🚀' },
-    { value: 'data-science', label: 'Data Scientist', icon: '📊' },
-    { value: 'mobile', label: 'Mobile Developer', icon: '📱' },
-    { value: 'devops', label: 'DevOps Engineer', icon: '🔧' },
-    { value: 'ui-ux', label: 'UI/UX Designer', icon: '🎨' },
-    { value: 'product-manager', label: 'Product Manager', icon: '📋' },
+    { value: 'frontend', label: 'Frontend Developer', icon: '' },
+    { value: 'backend', label: 'Backend Developer', icon: '' },
+    { value: 'fullstack', label: 'Full Stack Developer', icon: '' },
+    { value: 'data-science', label: 'Data Scientist', icon: '' },
+    { value: 'mobile', label: 'Mobile Developer', icon: '' },
+    { value: 'devops', label: 'DevOps Engineer', icon: '' },
+    { value: 'ui-ux', label: 'UI/UX Designer', icon: '' },
+    { value: 'product-manager', label: 'Product Manager', icon: '' },
   ];
 
   const difficultyLevels = [
@@ -974,7 +974,7 @@ const MockInterview = () => {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h1 className="text-3xl font-bold mb-2">
-                🎤 Mock Interview Practice
+                 Mock Interview Practice
               </h1>
               <p className="text-muted">
                 Practice with AI-powered interview questions and get real-time feedback
@@ -1349,7 +1349,7 @@ const MockInterview = () => {
                 {interviewEnded && coachingSummary && (
                   <div className="neon-card p-6 rounded-2xl border border-primary/30">
                     <h3 className="text-lg font-semibold text-white mb-4">
-                      🎯 Interview Coaching Summary
+                       Interview Coaching Summary
                     </h3>
                     <div className="flex items-center gap-4 mb-6">
                       <div className="relative w-20 h-20 flex-shrink-0">
@@ -1375,7 +1375,7 @@ const MockInterview = () => {
                     {coachingSummary.issues.length > 0 && (
                       <div className="mb-4">
                         <p className="text-xs font-semibold text-red-400 mb-2 uppercase tracking-wide">
-                          🔧 Areas to Improve
+                           Areas to Improve
                         </p>
                         <ul className="space-y-1">
                           {coachingSummary.issues.map((issue, i) => (
@@ -1390,12 +1390,12 @@ const MockInterview = () => {
                     {coachingSummary.strengths.length > 0 && (
                       <div>
                         <p className="text-xs font-semibold text-green-400 mb-2 uppercase tracking-wide">
-                          ✨ Your Strengths
+                           Your Strengths
                         </p>
                         <ul className="space-y-1">
                           {coachingSummary.strengths.map((s, i) => (
                             <li key={i} className="flex items-start gap-2 text-sm text-[#B3B3C7]">
-                              <span className="text-green-400 mt-0.5">✓</span>
+                              <span className="text-green-400 mt-0.5"></span>
                               {s}
                             </li>
                           ))}
@@ -1755,7 +1755,7 @@ const MockInterview = () => {
                         {feedback.expression_feedback && (
                           <div className="mt-3 p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
                             <p className="text-xs font-semibold text-purple-400 mb-1">
-                              🎭 Expression Insight
+                               Expression Insight
                             </p>
                             <p className="text-[#B3B3C7] text-sm leading-relaxed">
                               {feedback.expression_feedback}

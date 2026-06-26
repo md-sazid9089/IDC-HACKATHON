@@ -30,14 +30,14 @@ const CourseResources = () => {
     const loadCourses = async () => {
       try {
         setLoading(true);
-        console.log('📚 Loading courses from Firestore...');
+        console.log(' Loading courses from Firestore...');
         const coursesRef = collection(db, 'Courses');
         const snapshot = await getDocs(coursesRef);
         
-        console.log('✅ Found', snapshot.size, 'courses');
+        console.log(' Found', snapshot.size, 'courses');
         
         if (snapshot.empty) {
-          console.warn('⚠️ Courses collection is empty');
+          console.warn(' Courses collection is empty');
           setCourses([]);
           setLoading(false);
           return;
@@ -47,7 +47,7 @@ const CourseResources = () => {
         const userEnrolledCourses = new Set();
         
         snapshot.forEach((doc) => {
-          console.log('📖 Processing course:', doc.id);
+          console.log(' Processing course:', doc.id);
           const data = doc.data();
           const courseData = {
             id: doc.id,
@@ -71,11 +71,11 @@ const CourseResources = () => {
           coursesData.push(courseData);
         });
 
-        console.log('✨ Courses loaded:', coursesData.length);
+        console.log(' Courses loaded:', coursesData.length);
         setCourses(coursesData);
         setEnrolledCourses(userEnrolledCourses);
       } catch (error) {
-        console.error('❌ Error loading courses:', error);
+        console.error(' Error loading courses:', error);
         showNotification('Failed to load courses. Check console for details.', 'error');
       } finally {
         setLoading(false);

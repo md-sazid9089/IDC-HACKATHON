@@ -47,7 +47,7 @@ export const calculateMatchScore = (userProfile, job) => {
     experienceNote = 'Experience level not specified';
   } else if (userExpIndex === jobExpIndex) {
     expScore = 20;
-    experienceNote = '✓ Perfect experience match';
+    experienceNote = ' Perfect experience match';
   } else if (Math.abs(userExpIndex - jobExpIndex) === 1) {
     expScore = 10;
     if (userExpIndex > jobExpIndex) {
@@ -92,10 +92,10 @@ export const calculateMatchScore = (userProfile, job) => {
 
   if (userTrack === jobTrack) {
     trackScore = 20;
-    trackNote = '✓ Perfect track match';
+    trackNote = ' Perfect track match';
   } else if (userCategory === jobCategory) {
     trackScore = 20;
-    trackNote = '✓ Track aligned';
+    trackNote = ' Track aligned';
   } else if (
     (userCategory === 'fullstack' && ['frontend', 'backend'].includes(jobCategory)) ||
     (jobCategory === 'fullstack' && ['frontend', 'backend'].includes(userCategory))
@@ -107,7 +107,7 @@ export const calculateMatchScore = (userProfile, job) => {
     trackNote = '~ Similar domain';
   } else {
     trackScore = 0;
-    trackNote = '✗ Different track';
+    trackNote = ' Different track';
   }
 
   // FINAL SCORE

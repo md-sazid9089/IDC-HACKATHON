@@ -371,9 +371,12 @@ async def root():
 )
 async def health_dependencies():
     hf_token_set = bool(_os.getenv('HF_TOKEN', ''))
-    embeddings_loaded = len([
-        c for c in _CORPUS_EMBEDDINGS if c.get('embedding')
-    ]) > 0
+    embeddings_loaded = False
+    if isinstance(_CORPUS_EMBEDDINGS, list):
+        embeddings_loaded = len([
+            c for c in _CORPUS_EMBEDDINGS if isinstance(c, dict) and c.get('embedding')
+        ]) > 0
+
 
     hf_reachable = False
     try:
@@ -1955,10 +1958,10 @@ _HF_CHAT_TIMEOUT = 30
 _HF_CHAT_MAX_RETRIES = 3
 
 _LLM_SYSTEM_PROMPT = (
-    'You are CareerPath Assistant — a concise, supportive expert in careers, '
-    'technical interviews, and skill development for students and fresh '
-    'graduates. Always ground your answers in the candidate context when '
-    'provided.'
+    'You are CareerPath Assistant — a highly professional, objective career consultant '
+    'and technical interview expert. Maintain a formal, authoritative, and direct tone. '
+    'Provide actionable, high-impact advice without unnecessary colloquialisms. '
+    'Always ground your answers in the candidate context when provided.'
 )
 
 

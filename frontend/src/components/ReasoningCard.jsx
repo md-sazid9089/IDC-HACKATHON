@@ -8,7 +8,7 @@
  *
  * Render rules:
  *   - Title + score prominently (score is optional — degrade gracefully)
- *   - ✓ green for positive factors, ✗ muted/red for negative
+ *   -  green for positive factors,  muted/red for negative
  *   - If `factors` is empty or missing, render NOTHING (do not show shell)
  */
 import React from 'react';

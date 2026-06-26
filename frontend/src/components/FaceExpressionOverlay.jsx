@@ -264,37 +264,37 @@ export function getExpressionCoaching(distribution) {
 
   // === Strong negative pattern (highest priority) ==========================
   if (negativeTotal >= 50) {
-    coaching.push({ icon: '😟', priority: 'high',
+    coaching.push({ icon: '', priority: 'high',
       tip: 'You appeared tense for most of the interview. Practise slow breathing before answering and unclench your jaw between questions.' });
   }
   if (fear >= 25) {
-    coaching.push({ icon: '🧘', priority: 'high',
+    coaching.push({ icon: '', priority: 'high',
       tip: 'Anxiety read on camera. Slow your speech, look at the lens, and take a deliberate pause before each answer.' });
   }
   if (sad >= 25) {
-    coaching.push({ icon: '💪', priority: 'high',
+    coaching.push({ icon: '', priority: 'high',
       tip: 'Your face read low-energy at times. Lift the corners of your mouth slightly — a neutral-to-positive expression projects confidence.' });
   }
   if (angry >= 15 || disgust >= 12) {
-    coaching.push({ icon: '😌', priority: 'medium',
+    coaching.push({ icon: '', priority: 'medium',
       tip: 'Your expression read as intense or guarded. Soften the brow and keep an open, approachable face.' });
   }
 
   // === Positive patterns (only surfaced when negatives are under control) ==
   if (happy >= 30 && negativeTotal < 40) {
-    coaching.push({ icon: '✅', priority: 'good',
+    coaching.push({ icon: '', priority: 'good',
       tip: 'Great positive energy — your warmth came through clearly. Keep that going.' });
   } else if (neutral >= 60 && negativeTotal < 25 && happy < 30) {
-    coaching.push({ icon: '🧊', priority: 'medium',
+    coaching.push({ icon: '', priority: 'medium',
       tip: 'Very composed but quite flat. A small, genuine smile when greeting and closing each answer would lift engagement.' });
   } else if (happy < 10 && negativeTotal < 30) {
-    coaching.push({ icon: '😊', priority: 'medium',
+    coaching.push({ icon: '', priority: 'medium',
       tip: 'Try to show more enthusiasm — a small smile when delivering your answer signals genuine interest.' });
   }
 
   // === Final reassurance card if nothing else fired ========================
   if (coaching.length === 0) {
-    coaching.push({ icon: '👍', priority: 'good',
+    coaching.push({ icon: '', priority: 'good',
       tip: 'Balanced and professional on camera. No specific facial-expression concerns from this session.' });
   }
   return coaching;
@@ -543,13 +543,13 @@ function getMedianEmotion(buffer) {
 
 // Emoji + colour map for the live-emotion overlay badge.
 const EMOTION_META = {
-  happy:    { emoji: '😊' },
-  sad:      { emoji: '😢' },
-  angry:    { emoji: '😠' },
-  fear:     { emoji: '😨' },
-  surprise: { emoji: '😮' },
-  disgust:  { emoji: '🤢' },
-  neutral:  { emoji: '😐' },
+  happy:    { emoji: '' },
+  sad:      { emoji: '' },
+  angry:    { emoji: '' },
+  fear:     { emoji: '' },
+  surprise: { emoji: '' },
+  disgust:  { emoji: '' },
+  neutral:  { emoji: '' },
 };
 
 // =====================================================================
@@ -964,7 +964,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
 
         {httpsWarning && (
           <div className="px-3 py-2 text-xs text-amber-300 bg-amber-950/40 border-b border-amber-900/40">
-            ⚠ Camera requires HTTPS in production. On localhost this should work — check browser permissions.
+             Camera requires HTTPS in production. On localhost this should work — check browser permissions.
           </div>
         )}
 

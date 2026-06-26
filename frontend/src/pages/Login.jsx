@@ -383,7 +383,7 @@ const Login = () => {
         {loginType === 'admin' && (
           <div className="mt-4 p-4 rounded-lg" style={{background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.08)'}}>
             <p className="text-xs text-muted text-center">
-              <strong>🔒 Secure:</strong> Only admin@gmail.com can access the admin panel
+              <strong> Secure:</strong> Only admin@gmail.com can access the admin panel
             </p>
           </div>
         )}

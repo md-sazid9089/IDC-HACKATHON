@@ -291,10 +291,10 @@ const AdminDashboard = () => {
                       : 'bg-white/10 text-main hover:bg-white/20'
                   }`}
                 >
-                  {tab === 'overview' && '📊 Overview'}
-                  {tab === 'track' && '🎯 Career Tracks'}
-                  {tab === 'location' && '📍 Locations'}
-                  {tab === 'experience' && '💼 Experience'}
+                  {tab === 'overview' && ' Overview'}
+                  {tab === 'track' && ' Career Tracks'}
+                  {tab === 'location' && ' Locations'}
+                  {tab === 'experience' && ' Experience'}
                 </motion.button>
               ))}
             </div>

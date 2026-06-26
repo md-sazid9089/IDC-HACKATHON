@@ -184,7 +184,7 @@ export default function MindsparksCredential({ score, userName, confidence }) {
               <span className="font-bold text-text-main glow-text">
                 Mindsparks Career Ready
               </span>
-              <span className="text-primary">✓</span>
+              <span className="text-primary"></span>
             </div>
             <div className="mt-1 flex items-center gap-3 text-xs text-text-muted">
               <span className="inline-flex items-center gap-1">

@@ -55,12 +55,12 @@ const Navbar = () => {
   ];
 
   const aiFeatures = [
-    { name: 'AI Assistance', href: '/chatassistance', icon: '💬' },
-    { name: 'CV Upload', href: '/cv-upload', icon: '📄' },
-    { name: 'Career Roadmap', href: '/career-roadmap', icon: '🗺️' },
-    { name: 'Mock Interview', href: '/mock-interview', icon: '🎤' },
-    { name: 'Application Generator', href: '/job-application-generator', icon: '📝' },
-    { name: 'Knowledge Graph', href: '/knowledge-graph', icon: '🕸️' },
+    { name: 'AI Assistance', href: '/chatassistance', icon: '' },
+    { name: 'CV Upload', href: '/cv-upload', icon: '' },
+    { name: 'Career Roadmap', href: '/career-roadmap', icon: '' },
+    { name: 'Mock Interview', href: '/mock-interview', icon: '' },
+    { name: 'Application Generator', href: '/job-application-generator', icon: '' },
+    { name: 'Knowledge Graph', href: '/knowledge-graph', icon: '' },
   ];
 
   const publicNavLinks = [

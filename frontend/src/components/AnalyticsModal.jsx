@@ -464,10 +464,10 @@ const AnalyticsModal = ({ isOpen, onClose }) => {
                   {/* Chart Descriptions */}
                   <div className="bg-white/5 border border-primary/30 rounded-lg p-4">
                     <p className="text-sm text-muted">
-                      {activeTab === 'overview' && '📊 Platform Overview: Displays the distribution of total jobs, users, and applicants on the platform.'}
-                      {activeTab === 'track' && '🎯 Career Tracks: Shows the distribution of applicants across different career tracks.'}
-                      {activeTab === 'location' && '📍 Locations: Illustrates applicant trends across different job locations.'}
-                      {activeTab === 'experience' && '💼 Experience Levels: Breaks down applicants by required experience levels.'}
+                      {activeTab === 'overview' && ' Platform Overview: Displays the distribution of total jobs, users, and applicants on the platform.'}
+                      {activeTab === 'track' && ' Career Tracks: Shows the distribution of applicants across different career tracks.'}
+                      {activeTab === 'location' && ' Locations: Illustrates applicant trends across different job locations.'}
+                      {activeTab === 'experience' && ' Experience Levels: Breaks down applicants by required experience levels.'}
                     </p>
                   </div>
                 </div>

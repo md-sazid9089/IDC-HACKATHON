@@ -158,7 +158,7 @@ const JobDetails = () => {
           {/* Match Info (if available) */}
           {job.matchReason && (
             <div className="mt-6 p-4 rounded-lg" style={{background: 'rgba(168,85,247,0.04)', border: '1px solid rgba(168,85,247,0.08)'}}>
-              <p className="text-sm font-medium" style={{color:'#C084FC'}}>✓ {job.matchReason}</p>
+              <p className="text-sm font-medium" style={{color:'#C084FC'}}> {job.matchReason}</p>
             </div>
           )}
         </motion.div>

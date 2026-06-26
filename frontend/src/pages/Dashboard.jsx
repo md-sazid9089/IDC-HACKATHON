@@ -357,7 +357,7 @@ const Dashboard = () => {
           className="mb-8"
         >
           <h1 className="text-4xl font-bold mb-2 glow-text">
-            Welcome back, {currentUser?.displayName?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'Guest'}! 👋
+            Welcome back, {currentUser?.displayName?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'Guest'}! 
           </h1>
           <p className="text-muted">
             Here's what's happening with your career journey
@@ -761,7 +761,7 @@ const JobCard = ({ job }) => (
     <p className="text-sm text-muted mb-3 line-clamp-2">{job.description}</p>
     {job.matchReason && (
       <div className="text-xs text-primary bg-[rgba(168,85,247,0.1)] px-3 py-2 rounded-lg">
-        ✓ {job.matchReason}
+         {job.matchReason}
       </div>
     )}
   </div>

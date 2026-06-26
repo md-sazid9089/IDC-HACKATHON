@@ -165,7 +165,7 @@ const LearningSuggestionCard = ({ suggestions }) => {
       {/* Footer Info */}
       <div className="mt-4 p-3 bg-purple-900/20 rounded-lg border border-purple-500/10">
         <p className="text-xs text-gray-400 text-center">
-          💡 Click on each skill to view recommended learning resources
+           Click on each skill to view recommended learning resources
         </p>
       </div>
     </motion.div>

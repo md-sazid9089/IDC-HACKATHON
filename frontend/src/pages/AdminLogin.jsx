@@ -301,7 +301,7 @@ const AdminLogin = () => {
               className="p-4 rounded-xl" style={{background:'rgba(168,85,247,0.05)', border:'1px solid rgba(168,85,247,0.1)'}}
             >
               <p className="text-xs text-muted leading-relaxed">
-                🔒 This is a secure admin portal. Only authorized administrators with the correct credentials can access the panel.
+                 This is a secure admin portal. Only authorized administrators with the correct credentials can access the panel.
               </p>
             </motion.div>
           </form>

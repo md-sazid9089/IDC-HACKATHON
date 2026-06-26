@@ -338,7 +338,7 @@ export default function CvUpload() {
                   <Lightbulb size={24} style={{ color: "#A855F7", marginTop: "2px", flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <h3 style={{ fontSize: "1.125rem", fontWeight: "600", color: "#FFFFFF", margin: "0 0 0.75rem 0" }}>
-                      🚀 Hot Skills to Learn Now
+                       Hot Skills to Learn Now
                     </h3>
                     <div style={{ color: "#CBD5E1", fontSize: "0.95rem", lineHeight: "1.6", whiteSpace: "pre-line" }}>
                       {skillsSuggestion}

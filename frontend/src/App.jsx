@@ -38,6 +38,7 @@ const AdminCourses = lazy(() => import("./pages/AdminCourses"));
 const JobMarketInsights = lazy(() => import("./pages/JobMarketInsights"));
 const MockInterview = lazy(() => import("./pages/MockInterview"));
 const KnowledgeGraph = lazy(() => import("./pages/KnowledgeGraph"));
+const JobApplicationGenerator = lazy(() => import("./pages/JobApplicationGenerator"));
 
 // Branded page-level loading fallback
 import { AILoading } from './components/branding';
@@ -86,6 +87,7 @@ function AppContent() {
             <Route path="/career-roadmap" element={<ProtectedRoute><CareerRoadmap /></ProtectedRoute>} />
             <Route path="/mock-interview" element={<ProtectedRoute><MockInterview /></ProtectedRoute>} />
             <Route path="/knowledge-graph" element={<ProtectedRoute><KnowledgeGraph /></ProtectedRoute>} />
+            <Route path="/job-application-generator" element={<ProtectedRoute><JobApplicationGenerator /></ProtectedRoute>} />
             <Route path="/job-market-insights" element={<JobMarketInsights />} />
             <Route path="/admin-login" element={<AdminLogin />} />
             <Route path="/admin-dashboard" element={<AdminProtectedRoute><AdminDashboard /></AdminProtectedRoute>} />

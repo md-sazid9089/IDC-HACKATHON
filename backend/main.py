@@ -2609,6 +2609,54 @@ async def analyze_expression_alias(file: UploadFile = File(...)):
     return await face_expression(file)
 
 
+@app.options("/generate-application")
+async def options_generate_application():
+    return {"message": "OK"}
+
+
+@app.post(
+    "/generate-application",
+    tags=["application"],
+    summary="Generate a personalised job application letter",
+    response_description="A tailored cover letter / job application based on user profile and target job using RAG context",
+)
+async def generate_application(req: Dict[str, Any]):
+    target_job = (req.get('targetJob') or '').strip()
+    if not target_job:
+        raise HTTPException(status_code=400, detail='targetJob is required')
+    profile = req.get('profile') or {}
+    level = (
+        profile.get('experienceLevel') or profile.get('level') or 'beginner'
+    )
+    skills_list = profile.get('skills') if isinstance(profile, dict) else None
+    if isinstance(skills_list, list) and skills_list:
+        skills_s = ', '.join(str(s) for s in skills_list if s)
+    else:
+        skills_s = 'none listed'
+
+    context = await _rag_context(
+        f'Job description, requirements and details for {target_job}', profile, top_k=5,
+    )
+
+    user_prompt = (
+        (f'{context}\n\n---\n\n' if context else '')
+        + 'Generate a highly professional, tailored job application cover letter in plain text.\n\n'
+        + f'Applicant Profile:\n- Experience Level: {level}\n'
+        + f'- Core Skills: {skills_s}\n- Target Position: {target_job}\n\n'
+        + 'Requirements:\n'
+        + '1. Keep it structured with a salutation, introductory paragraph, body paragraphs highlighting how the applicant\'s skills match the target job, and a professional closing.\n'
+        + '2. Sound enthusiastic, confident, and professional.\n'
+        + '3. Focus on matching the core skills and level of the candidate to the target role requirements using the RAG context details.'
+    )
+
+    try:
+        content = await _hf_chat(user_prompt, max_tokens=1000, temperature=0.7)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'Application letter generation failed: {e}')
+
+    return {'content': content}
+
+
 @app.on_event("startup")
 async def startup_event():
     _load_hybrid_corpus()

@@ -59,6 +59,7 @@ const Navbar = () => {
     { name: 'CV Upload', href: '/cv-upload', icon: '📄' },
     { name: 'Career Roadmap', href: '/career-roadmap', icon: '🗺️' },
     { name: 'Mock Interview', href: '/mock-interview', icon: '🎤' },
+    { name: 'Application Generator', href: '/job-application-generator', icon: '📝' },
     { name: 'Knowledge Graph', href: '/knowledge-graph', icon: '🕸️' },
   ];
 
@@ -221,6 +222,9 @@ const Navbar = () => {
                               {feature.name === 'AI Assistance' && 'Get AI help'}
                               {feature.name === 'CV Upload' && 'Analyze your CV'}
                               {feature.name === 'Career Roadmap' && 'Plan your career'}
+                              {feature.name === 'Application Generator' && 'Tailor cover letters'}
+                              {feature.name === 'Mock Interview' && 'Practice interviews'}
+                              {feature.name === 'Knowledge Graph' && 'Visualize core skills'}
                             </p>
                           </div>
                         </Link>

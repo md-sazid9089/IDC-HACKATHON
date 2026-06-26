@@ -78,13 +78,13 @@ const Home = () => {
                   <span className="text-sm font-medium" style={{color:'#C084FC'}}>Aligned with SDG 8</span>
                 </div>
 
-                <h1 className="font-heading text-4xl sm:text-5xl lg:text-6xl font-bold mb-6 leading-tight glow-text">
+                <h1 className="font-heading text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold mb-6 leading-tight glow-text break-words">
                   Discover your path.
                   <br />
                   <span style={{color:'#A855F7'}}>Shape your career.</span>
                 </h1>
 
-                <p className="text-lg text-muted mb-8 max-w-xl">
+                <p className="text-base sm:text-lg text-muted mb-8 max-w-xl">
                   Match your skills to relevant jobs and learning resources — build a roadmap that leads to real opportunities.
                 </p>
 
@@ -99,7 +99,7 @@ const Home = () => {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-3 gap-6 mt-12">
+                <div className="grid grid-cols-3 gap-3 sm:gap-6 mt-8 sm:mt-12">
                   {stats.map((stat, index) => (
                     <motion.div
                       key={stat.label}
@@ -107,8 +107,8 @@ const Home = () => {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.3 + index * 0.1 }}
                     >
-                      <div className="text-3xl font-heading font-bold" style={{color:'#A855F7'}}>{stat.number}</div>
-                      <div className="text-sm text-muted">{stat.label}</div>
+                      <div className="text-2xl sm:text-3xl font-heading font-bold" style={{color:'#A855F7'}}>{stat.number}</div>
+                      <div className="text-xs sm:text-sm text-muted">{stat.label}</div>
                     </motion.div>
                   ))}
                 </div>

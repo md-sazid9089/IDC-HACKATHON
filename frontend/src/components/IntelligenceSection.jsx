@@ -185,7 +185,7 @@ export default function IntelligenceSection({
 
           <div className="flex items-center justify-center py-6">
             <div className="text-center">
-              <div className="text-6xl sm:text-7xl font-extrabold text-primary-light glow-text">
+              <div className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold text-primary-light glow-text">
                 {Math.round(readiness.score || 0)}
                 <span className="text-2xl text-text-muted font-medium ml-2">
                   /100

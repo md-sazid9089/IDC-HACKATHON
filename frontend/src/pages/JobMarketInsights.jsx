@@ -253,9 +253,9 @@ const JobMarketInsights = () => {
                       </span>
                     </div>
                   </div>
-                  <div className="bg-purple-500/10 rounded-xl p-4 border border-purple-500/20 min-w-[180px]">
+                  <div className="bg-purple-500/10 rounded-xl p-4 border border-purple-500/20 w-full md:w-auto md:min-w-[180px]">
                     <p className="text-xs text-gray-400 mb-1">Average Salary</p>
-                    <p className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">৳{job.avgSalaryBDT.toLocaleString()}</p>
+                    <p className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent break-words">৳{job.avgSalaryBDT.toLocaleString()}</p>
                   </div>
                 </div>
                 <div className="bg-[rgba(0,0,0,0.2)] rounded-xl p-4">
@@ -302,7 +302,7 @@ const JobMarketInsights = () => {
                   <div className="bg-[rgba(0,0,0,0.2)] rounded-xl p-5">
                     <p className="text-xs text-gray-400 mb-3">Opportunity Score</p>
                     <div className="flex items-end gap-2 mb-4">
-                      <p className="text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">{item.opportunityScore}</p>
+                      <p className="text-3xl sm:text-4xl md:text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">{item.opportunityScore}</p>
                       <p className="text-gray-400 text-xl mb-2">/100</p>
                     </div>
                     <div className="w-full bg-[rgba(255,255,255,0.1)] rounded-full h-3 overflow-hidden">

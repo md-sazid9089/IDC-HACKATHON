@@ -33,12 +33,29 @@
     -moz-osx-font-smoothing: grayscale;
     /* Removed wide letter-spacing for cleaner body text */
     line-height: 1.6;
+    /* Hard guard against any rogue child element creating a horizontal scrollbar
+       on small viewports (e.g. floating-card absolute positioning, long words). */
+    overflow-x: hidden;
   }
 
   h1, h2, h3, h4, h5, h6 {
     @apply font-heading font-bold;
     letter-spacing: -0.01em; /* tighter, more modern */
     line-height: 1.2;
+    /* Long single words (URLs, "Backendarchitect") never blow out the layout. */
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+  }
+
+  /* Same guard for paragraph copy and grid/flex children that hold long tokens. */
+  p, li, span, a, button {
+    overflow-wrap: break-word;
+  }
+
+  /* Media never forces horizontal overflow on small viewports. */
+  img, video, canvas, svg, iframe {
+    max-width: 100%;
+    height: auto;
   }
 
   /* Glow shadow only on hero headings, not every heading */

@@ -214,7 +214,7 @@ export default function WhatIfSimulator({
             Simulated Readiness Score
           </p>
           <div className="flex items-baseline gap-2">
-            <motion.span className="text-6xl font-extrabold text-primary-light glow-text">
+            <motion.span className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-primary-light glow-text">
               {display}
             </motion.span>
             <span className="text-2xl text-text-muted font-medium">/100</span>

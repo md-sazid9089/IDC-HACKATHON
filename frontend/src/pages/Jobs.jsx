@@ -178,7 +178,7 @@ const Jobs = () => {
             className="neon-card p-6 mb-8"
           >
             <div className="flex flex-wrap items-center gap-4">
-              <div className="flex-1 min-w-[250px]">
+              <div className="flex-1 w-full sm:w-auto sm:min-w-[250px]">
                 <h3 className="text-lg font-semibold text-main mb-2">Your Profile</h3>
                 <div className="flex flex-wrap gap-2">
                   <span className="px-3 py-1 bg-primary/20 border border-primary/40 rounded-full text-sm text-primary">
@@ -189,7 +189,7 @@ const Jobs = () => {
                   </span>
                 </div>
               </div>
-              <div className="flex-1 min-w-[250px]">
+              <div className="flex-1 w-full sm:w-auto sm:min-w-[250px]">
                 <p className="text-sm text-muted mb-2">Skills ({userProfile.skills?.length || 0})</p>
                 <div className="flex flex-wrap gap-2">
                   {userProfile.skills?.slice(0, 5).map((skill, idx) => (

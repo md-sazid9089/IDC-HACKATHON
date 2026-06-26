@@ -251,9 +251,9 @@ const CourseResources = () => {
           <div className="inline-block p-4 bg-purple-500/10 rounded-2xl backdrop-blur-sm border border-purple-500/20 mb-6">
             <BookOpen size={64} className="mx-auto text-purple-400" />
           </div>
-          <h1 className="text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent animate-pulse">Course Resources</h1>
-          <p className="text-xl text-gray-300 max-w-2xl mx-auto">Explore our comprehensive collection of courses and start your learning journey today</p>
-          <div className="mt-8 flex justify-center gap-4 text-sm">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent animate-pulse">Course Resources</h1>
+          <p className="text-base sm:text-xl text-gray-300 max-w-2xl mx-auto">Explore our comprehensive collection of courses and start your learning journey today</p>
+          <div className="mt-8 flex flex-wrap justify-center gap-4 text-sm">
             <div className="bg-purple-500/20 px-4 py-2 rounded-lg border border-purple-500/30">
               <span className="text-purple-300 font-semibold">{courses.length}</span>
               <span className="text-gray-400 ml-1">Courses Available</span>

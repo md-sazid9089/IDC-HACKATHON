@@ -34,6 +34,35 @@ const BG = '#0B0E1C';
 // Column x-coordinates per spec
 const COL = { user: 50, skills: 250, job: 500, courses: 750 };
 
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+}
+
+function normalizeJob(job) {
+  return {
+    ...job,
+    title: job?.title || job?.role || job?.jobTitle || 'Target Job',
+    skillsRequired: normalizeStringArray(
+      job?.skillsRequired || job?.requiredSkills || job?.skills
+    ),
+    experienceRequired: job?.experienceRequired || job?.level || '',
+    track: job?.track || job?.industry || '',
+  };
+}
+
+function normalizeResource(resource) {
+  return {
+    ...resource,
+    title: resource?.title || resource?.name || 'Untitled Resource',
+    relatedSkills: normalizeStringArray(
+      resource?.relatedSkills || resource?.skills || resource?.tags
+    ),
+  };
+}
+
 function makeNode(id, label, color, x, y) {
   return {
     id,
@@ -92,11 +121,15 @@ export default function KnowledgeGraph() {
         }
 
         const jobsSnap = await getDocs(collection(db, 'jobs'));
-        const jobsList = jobsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const jobsList = jobsSnap.docs.map((d) =>
+          normalizeJob({ id: d.id, ...d.data() })
+        );
         if (!cancelled) setJobs(jobsList);
 
         const resSnap = await getDocs(collection(db, 'learningResources'));
-        const resList = resSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const resList = resSnap.docs.map((d) =>
+          normalizeResource({ id: d.id, ...d.data() })
+        );
         if (!cancelled) setResources(resList);
       } catch {
         // Silent \u2014 placeholder graph will render below.
@@ -121,9 +154,16 @@ export default function KnowledgeGraph() {
     // Find the top-matched job using existing scoring utility.
     let topJob = null;
     let topMatch = null;
-    if (userProfile && jobs.length > 0) {
+    const normalizedProfile = userProfile
+      ? {
+          ...userProfile,
+          skills: normalizeStringArray(userProfile.skills),
+        }
+      : null;
+
+    if (normalizedProfile && jobs.length > 0) {
       const scored = jobs
-        .map((job) => ({ job, match: calculateMatchScore(userProfile, job) }))
+        .map((job) => ({ job, match: calculateMatchScore(normalizedProfile, job) }))
         .sort((a, b) => (b.match.score || 0) - (a.match.score || 0));
       if (scored.length > 0) {
         topJob = scored[0].job;
@@ -190,7 +230,8 @@ export default function KnowledgeGraph() {
       // Find a suggestion for this skill (case-insensitive contains).
       const match = suggestions.find(
         (sug) =>
-          sug.skill.toLowerCase().trim() === skill.toLowerCase().trim()
+          String(sug.skill || '').toLowerCase().trim() ===
+          String(skill || '').toLowerCase().trim()
       );
       const courseTitle =
         match?.resources?.[0]?.title || `Course for ${skill}`;
@@ -221,6 +262,7 @@ export default function KnowledgeGraph() {
         style={{
           width: '100%',
           height: 'calc(100vh - 200px)',
+          minHeight: 520,
           background: BG,
         }}
       >

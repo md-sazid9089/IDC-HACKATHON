@@ -1,14 +1,14 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any, Tuple
 from dotenv import load_dotenv
-import base64
+import base64  # LEGACY: unused import
 import json as _json
 from pathlib import Path
 from io import BytesIO
 from PyPDF2 import PdfReader
-from pydantic import BaseModel
-import random
+from pydantic import BaseModel, Field
+import random  # LEGACY: unused import
 
 
 # Load environment variables
@@ -16,6 +16,35 @@ load_dotenv()
 
 # Initialize FastAPI app
 app = FastAPI()
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    history: list[dict] = Field(default_factory=list, max_length=50)
+    preferred_track: str | None = Field(None, max_length=64)
+    experience_level: str | None = Field(None, max_length=32)
+    preferredTrack: str | None = Field(None, max_length=64)
+    experienceLevel: str | None = Field(None, max_length=32)
+
+
+class SourceItem(BaseModel):
+    id: str
+    type: str
+    title: str
+    snippet: str
+    score: float
+
+
+class ChatResponse(BaseModel):
+    response: str
+    reply: str
+    sources: list[SourceItem]
+    factors: list[dict]
+    confidence: str
+    basis: str
+    retrieval_path: str
+    signal_types_used: list[str]
+    generation_model: str
 
 # Configure CORS middleware FIRST (before routes)
 # allow_origins=["*"] is safe here because allow_credentials=False (no cookies
@@ -727,6 +756,11 @@ _DF_CACHE: Dict[str, int] = {}       # token -> document frequency
 _AVG_DOC_LEN: float = 0.0
 _DOC_LENS: List[int] = []            # token count per item (parallel to _HYBRID_CORPUS)
 _ITEM_EMBED_CACHE: Dict[str, List[float]] = {}  # item id -> embedding
+_RERANKER_MODEL = None
+_RERANKER_READY: bool = False
+_GENERATOR_PIPELINE = None
+_GENERATOR_READY: bool = False
+_GENERATOR_MODEL_NAME = "microsoft/Phi-3-mini-4k-instruct"
 
 # ── Track filter skill sets (closed, not imported) ───────────
 FRONTEND_SKILLS = {
@@ -842,6 +876,51 @@ def _get_local_model():
     return _LOCAL_EMBED_MODEL
 
 
+def _get_reranker():
+    global _RERANKER_MODEL, _RERANKER_READY
+    if _RERANKER_MODEL is None:
+        try:
+            from sentence_transformers import CrossEncoder
+            _RERANKER_MODEL = CrossEncoder(
+                "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                max_length=512,
+            )
+            _RERANKER_READY = True
+            print("[RAG] Reranker loaded: cross-encoder/ms-marco-MiniLM-L-6-v2")
+        except Exception as e:
+            print(f"[RAG] Reranker load failed: {e}")
+            _RERANKER_READY = False
+    return _RERANKER_MODEL
+
+
+def _rerank(query: str, candidates: list[dict], top_n: int = 5) -> list[dict]:
+    """
+    Cross-encoder reranking of hybrid retrieval candidates.
+    Falls back to hybrid score ordering if reranker unavailable.
+    """
+    reranker = _get_reranker()
+    if not _RERANKER_READY or reranker is None or not candidates:
+        return candidates[:top_n]
+    try:
+        pairs = []
+        for c in candidates:
+            passage = (
+                c.get("title", "") + " " +
+                " ".join(c.get("skills", c.get("skillsRequired", []))) + " " +
+                c.get("description", "")[:400]
+            )
+            pairs.append((query, passage))
+        scores = reranker.predict(pairs)
+        for i, c in enumerate(candidates):
+            c["_rerank_score"] = float(scores[i])
+        reranked = sorted(candidates, key=lambda x: x["_rerank_score"], reverse=True)
+        return reranked[:top_n]
+    except Exception as e:
+        print(f"[RAG] Reranker inference failed: {e}")
+        return candidates[:top_n]
+
+
+# LEGACY: replaced by _dense_score_all
 def _hf_embed(text: str):
     """HF Inference API embedding. Returns None on failure."""
     global _LAST_EMBED_PATH
@@ -1070,14 +1149,70 @@ async def _dense_score_all(
     query: str,
     corpus: List[Dict],
 ) -> List[float]:
-    """Return one cosine-similarity score per corpus item.
-
-    Currently disabled: returns neutral zeros so /chat ranks purely on BM25.
-    Re-enable by computing q_emb = _embed(query) and scoring against
-    _ITEM_EMBED_CACHE — kept as a single source of truth for the hybrid
-    pipeline in case dense scoring is turned back on.
     """
-    return [0.0] * len(corpus)
+    Embeds the query and computes cosine similarity against
+    each corpus item's cached embedding. Falls back to zeros
+    if embedding fails so hybrid scoring degrades gracefully.
+    """
+    if not corpus:
+        return []
+
+    q_emb: list[float] = []
+    try:
+        hf_token = _os.getenv("HF_TOKEN", "")
+        if hf_token:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.post(
+                    "https://api-inference.huggingface.co/pipeline/feature-extraction/"
+                    "sentence-transformers/all-mpnet-base-v2",
+                    headers={
+                        "Authorization": f"Bearer {hf_token}",
+                        "X-Wait-For-Model": "true",
+                    },
+                    json={"inputs": query, "options": {"wait_for_model": True}},
+                )
+                if resp.status_code == 200:
+                    raw = resp.json()
+                    q_emb = raw[0] if isinstance(raw[0], list) else raw
+    except Exception:
+        pass
+
+    if not q_emb:
+        try:
+            model = _get_local_model()
+            if model is not None:
+                q_emb = model.encode(query, normalize_embeddings=True).tolist()
+        except Exception as e:
+            print(f"[RAG] Dense embed failed: {e}")
+            return [0.0] * len(corpus)
+
+    if not q_emb:
+        return [0.0] * len(corpus)
+
+    scores: list[float] = []
+    for item in corpus:
+        item_id = item.get("id", item.get("title", ""))
+        item_emb = _ITEM_EMBED_CACHE.get(item_id)
+        if item_emb:
+            scores.append(_cosine(q_emb, item_emb))
+        else:
+            try:
+                model = _get_local_model()
+                if model is not None:
+                    text = (
+                        item.get("title", "") + " " +
+                        " ".join(item.get("skills", item.get("skillsRequired", []))) + " " +
+                        item.get("description", "")[:300]
+                    )
+                    emb = model.encode(text, normalize_embeddings=True).tolist()
+                    _ITEM_EMBED_CACHE[item_id] = emb
+                    scores.append(_cosine(q_emb, emb))
+                else:
+                    scores.append(0.0)
+            except Exception:
+                scores.append(0.0)
+    return scores
 
 
 # ── TASK 5 — Hybrid scorer with alpha weighting ───────────────
@@ -1120,7 +1255,10 @@ async def _hybrid_retrieve(
         combined.append((h_score, entry))
 
     combined.sort(key=lambda x: x[0], reverse=True)
-    return [item for _, item in combined[:top_k]]
+    sorted_items = [item for _, item in combined]
+    top_candidates = sorted_items[:20]
+    reranked = _rerank(query, top_candidates, top_n=top_k)
+    return reranked
 
 
 # ── TASK 6 — Lost-in-the-middle context window layout ─────────
@@ -1340,6 +1478,8 @@ def build_rag_answer(query: str, sources: list) -> str:
     Build a rich conversational answer from RAG sources.
     Never apologizes or blocks by topic; it always provides useful guidance.
     """
+    if isinstance(sources, str):
+        sources = [{"type": "roadmap", "title": "Context Window", "text": sources}]
     if not sources:
         return _generate_general_answer(query)
 
@@ -1480,16 +1620,17 @@ async def options_chat():
     return {'message': 'OK'}
 
 
-@app.post('/chat')
-async def chat(req: Dict[str, Any]):
+@app.post('/chat', response_model=ChatResponse)
+async def chat(body: ChatRequest):
     """Hybrid RAG career assistant."""
     try:
-        user_message = (req.get('message', '') or '').strip()
+        user_message = (body.message or '').strip()
+        history = body.history
         if not user_message:
             raise HTTPException(status_code=400, detail='message field is required')
 
-        preferred_track = req.get('preferred_track') or req.get('preferredTrack')
-        experience_level = req.get('experience_level') or req.get('experienceLevel')
+        preferred_track = body.preferred_track or body.preferredTrack
+        experience_level = body.experience_level or body.experienceLevel
         query = extract_search_query(user_message)
 
         if _HYBRID_READY:
@@ -1498,7 +1639,7 @@ async def chat(req: Dict[str, Any]):
                 preferred_track=preferred_track,
                 experience_level=experience_level,
             )
-            top_chunks = await _hybrid_retrieve(query, filtered, top_k=4, alpha=0.5)
+            top_chunks = await _hybrid_retrieve(query, filtered, top_k=20, alpha=0.5)
             retrieval_path = 'hybrid'
             sources = [
                 {
@@ -1557,20 +1698,36 @@ async def chat(req: Dict[str, Any]):
                 'type': s.get('type', ''),
                 'title': s.get('title', ''),
                 'snippet': _source_text(s)[:120],
+                'score': float(s.get('score', 0.0) or 0.0),
             }
             for s in sources
         ]
 
         basis = f"RAG retrieval via {retrieval_path}. Query: '{query}'"
+        context_window = _build_context_window(top_chunks) if _HYBRID_READY else ''
+        profile_hints = []
+        if preferred_track:
+            profile_hints.append(f"Target track: {preferred_track}")
+        if experience_level:
+            profile_hints.append(f"Experience: {experience_level}")
+        profile_summary = "; ".join(profile_hints)
+
+        answer_text = _generate_rag_answer(
+            query=query,
+            context_window=context_window,
+            profile_summary=profile_summary,
+            max_new_tokens=400,
+        )
         return {
-            'response': response_text,
-            'reply': response_text,
+            'response': answer_text,
+            'reply': answer_text,
             'sources': response_sources,
             'factors': factors,
             'confidence': confidence,
             'basis': basis,
             'retrieval_path': retrieval_path,
             'signal_types_used': ['rag_source'] if factors else [],
+            'generation_model': _GENERATOR_MODEL_NAME if _GENERATOR_READY else 'template',
         }
 
     except HTTPException:
@@ -1578,6 +1735,73 @@ async def chat(req: Dict[str, Any]):
     except Exception as e:
         print(f'Error in chat endpoint: {e}')
         raise HTTPException(status_code=500, detail=f'Chat error: {e}')
+
+
+def _load_generator():
+    """
+    Loads Phi-3-mini in a background thread.
+    Sets _GENERATOR_READY = True when done.
+    Falls back gracefully to template generation if unavailable.
+    """
+    global _GENERATOR_PIPELINE, _GENERATOR_READY
+    try:
+        import torch
+        from transformers import pipeline as hf_pipeline
+        print(f"[GEN] Loading {_GENERATOR_MODEL_NAME} ...")
+        _GENERATOR_PIPELINE = hf_pipeline(
+            "text-generation",
+            model=_GENERATOR_MODEL_NAME,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        _GENERATOR_READY = True
+        print(f"[GEN] {_GENERATOR_MODEL_NAME} ready.")
+    except Exception as e:
+        print(f"[GEN] Generator load failed (template fallback active): {e}")
+        _GENERATOR_READY = False
+
+
+def _generate_rag_answer(
+    query: str,
+    context_window: str,
+    profile_summary: str = "",
+    max_new_tokens: int = 400,
+) -> str:
+    """
+    Generates a grounded answer using Phi-3-mini.
+    Falls back to build_rag_answer() template if generator not ready.
+    """
+    if not _GENERATOR_READY or _GENERATOR_PIPELINE is None:
+        return build_rag_answer(query, context_window) if callable(
+            globals().get("build_rag_answer")
+        ) else "I'm still loading. Please try again in a moment."
+
+    prompt = (
+        "<|system|>\n"
+        "You are CareerPath AI, a career guidance assistant for students and fresh graduates. "
+        "Answer ONLY using the context provided. Be specific, cite source titles, and keep your answer under 200 words.\n"
+        "<|end|>\n"
+        f"<|user|>\nCONTEXT:\n{context_window}\n\n"
+        + (f"USER PROFILE:\n{profile_summary}\n\n" if profile_summary else "")
+        + f"QUESTION: {query}\n"
+        "<|end|>\n<|assistant|>\n"
+    )
+    try:
+        result = _GENERATOR_PIPELINE(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=1.0,
+            repetition_penalty=1.1,
+            return_full_text=False,
+        )
+        return result[0]["generated_text"].strip()
+    except Exception as e:
+        print(f"[GEN] Generation failed: {e}")
+        return build_rag_answer(query, context_window) if callable(
+            globals().get("build_rag_answer")
+        ) else "Generation failed. Please try again."
 
 
 # ===========================================================================
@@ -1868,6 +2092,12 @@ async def interview_question(req: Dict[str, Any]):
     return {'question': cleaned}
 
 
+@app.post("/generate-interview-question")
+async def generate_interview_question_alias(request: Request):
+    """Alias for /interview/question — contract compatibility."""
+    return await interview_question(await request.json())
+
+
 # ---------------------------------------------------------------------------
 # POST /interview/evaluate — replaces frontend evaluateInterviewAnswer()
 # ---------------------------------------------------------------------------
@@ -1934,6 +2164,12 @@ async def interview_evaluate(req: Dict[str, Any]):
         'strengths': [],
         'improvements': ['Provide more specific examples in your answer.'],
     }
+
+
+@app.post("/evaluate-interview-answer")
+async def evaluate_interview_answer_alias(request: Request):
+    """Alias for /interview/evaluate — contract compatibility."""
+    return await interview_evaluate(await request.json())
 
 
 # ---------------------------------------------------------------------------
@@ -2062,9 +2298,19 @@ async def face_expression(file: UploadFile = File(...)):
     return {'labels': labels}
 
 
+@app.post("/analyze-expression")
+async def analyze_expression_alias(file: UploadFile = File(...)):
+    """Alias for /face-expression — contract compatibility."""
+    return await face_expression(file)
+
+
 @app.on_event("startup")
 async def startup_event():
     _load_hybrid_corpus()
+    _get_reranker()
+    import threading as _threading
+    _threading.Thread(target=_load_generator, daemon=True).start()
+    print("[GEN] Phi-3 loading in background — template fallback active until ready.")
     _load_corpus()
     _init_chroma()
 

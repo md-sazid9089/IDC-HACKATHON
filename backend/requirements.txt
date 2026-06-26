@@ -6,3 +6,7 @@ PyPDF2
 python-multipart
 sentence-transformers
 chromadb-client
+torch
+transformers
+accelerate
+httpx

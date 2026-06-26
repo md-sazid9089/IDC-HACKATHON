@@ -1,16 +1,37 @@
+# Virtual environments
 .venv/
 venv/
+
+# Python bytecode
 __pycache__/
 *.pyc
 *.pyo
+
+# Secrets – never bake into image; inject via HF Space Secrets
 .env
 .env.example
+
+# Vercel config (not needed in Docker image)
 vercel.json
+
+# Dev scripts
 scripts/
+
+# Version control
 .git/
 .gitignore
+.agents/
+
+# Logs
 *.log
+server.out.log
+server.err.log
+
+# IDE / tooling
 .pytest_cache/
 .mypy_cache/
 .vscode/
 .idea/
+
+# Windows batch helpers
+*.bat

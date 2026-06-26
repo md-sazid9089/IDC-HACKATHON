@@ -1,12 +1,18 @@
-fastapi
-uvicorn[standard]
-python-dotenv
-pydantic>=2.0.0
-PyPDF2
-python-multipart
-sentence-transformers
-chromadb-client
-torch
-transformers
-accelerate
-httpx
+# Pinned for reproducible Docker builds
+# Last verified: 2026-06-26
+# To re-pin: pip install -r requirements.txt && pip freeze > requirements.txt
+
+fastapi==0.121.2
+uvicorn[standard]==0.38.0
+python-dotenv==1.2.1
+pydantic>=2.10.0,<3.0.0
+PyPDF2==3.0.1
+python-multipart==0.0.20
+sentence-transformers==5.6.0
+# Use lightweight chromadb-client (HttpClient only, no sqlite3 dep) for HF Spaces CPU Basic
+chromadb-client==0.6.3
+# torch is installed before this file in Dockerfile with --index-url for CPU-only (~2 GB vs 7 GB CUDA)
+torch==2.12.1
+transformers==5.12.1
+accelerate==1.14.0
+httpx==0.28.1

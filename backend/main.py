@@ -1,21 +1,85 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any, Tuple
-from dotenv import load_dotenv
-import base64  # LEGACY: unused import
-import json as _json
-from pathlib import Path
-from io import BytesIO
-from PyPDF2 import PdfReader
-from pydantic import BaseModel, Field
-import random  # LEGACY: unused import
+from __future__ import annotations
 
+import asyncio as _asyncio
+import json as _json
+import logging
+import math
+import os as _os
+import re
+import threading
+from datetime import datetime, timezone
+from io import BytesIO
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from PyPDF2 import PdfReader
+
+# ---------------------------------------------------------------------------
+# Logging — structured, timestamped, visible in HF Space build logs
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%SZ",
+)
+log = logging.getLogger("careerpath")
 
 # Load environment variables
 load_dotenv()
 
-# Initialize FastAPI app
-app = FastAPI()
+_STARTUP_TIME: datetime = datetime.now(timezone.utc)
+
+
+def _check_st_installed() -> bool:
+    try:
+        import sentence_transformers
+        return True
+    except ImportError:
+        return False
+
+# ---------------------------------------------------------------------------
+# FastAPI app — rich OpenAPI metadata for Swagger UI and judge review
+# ---------------------------------------------------------------------------
+app = FastAPI(
+    title="CareerPath AI — Backend API",
+    description=(
+        "**CareerPath AI** is a full-stack career guidance platform for "
+        "students and fresh graduates.\n\n"
+        "This backend powers:\n"
+        "- 🤖 **Hybrid RAG Chatbot** — BM25 + dense cosine retrieval, "
+        "cross-encoder re-ranking, Phi-3-mini generation\n"
+        "- 📄 **CV Analysis** — PDF parsing, skill extraction, LLM structuring\n"
+        "- 🗺️ **Career Roadmaps** — LLM-generated, RAG-grounded markdown roadmaps\n"
+        "- 🎤 **Mock Interviews** — question generation + answer evaluation via Llama-3.1-8B\n"
+        "- 😊 **Face Expression Analysis** — ViT-based emotion classification per frame\n"
+        "- 🧬 **Career DNA Scoring** — 5-category interpretable skill scoring\n"
+        "- 📊 **Readiness Score** — weighted aggregate: DNA 40% + Profile 30% + Interview 30%\n\n"
+        "All AI outputs carry an **ExplainabilityEnvelope** with factors, "
+        "confidence level, and signal types for full transparency."
+    ),
+    version="2.0.0",
+    contact={
+        "name": "CareerPath Team",
+        "url": "https://github.com/Tayebbb/IDC-HACKATHON",
+    },
+    license_info={
+        "name": "MIT",
+    },
+    openapi_tags=[
+        {"name": "health",    "description": "Liveness and dependency status endpoints"},
+        {"name": "cv",        "description": "CV / résumé upload, parsing and analysis"},
+        {"name": "chat",      "description": "Hybrid RAG career Q&A chatbot"},
+        {"name": "roadmap",   "description": "LLM-generated personalised career roadmaps"},
+        {"name": "interview", "description": "Mock interview question generation and evaluation"},
+        {"name": "face",      "description": "Real-time facial expression / emotion analysis"},
+        {"name": "analytics", "description": "Career DNA, readiness score, and job-match explainability"},
+        {"name": "data",      "description": "Career advice Q&A and skill roadmap data endpoints"},
+    ],
+)
 
 
 class ChatRequest(BaseModel):
@@ -279,12 +343,32 @@ _ADVICE_CACHE: "List[Dict[str, Any]]" = _load_json(_ADVICE_PATH)
 _ROADMAPS_CACHE: "List[Dict[str, Any]]" = _load_json(_ROADMAPS_PATH)
 
 
-@app.get("/")
+@app.get(
+    "/",
+    tags=["health"],
+    summary="API liveness check",
+    response_description="Running status, version and uptime",
+)
 async def root():
-    """Health check endpoint"""
-    return {"message": "CareerPath RAG Chatbot API is running"}
+    """Returns a liveness message, API version, and uptime in seconds.
 
-@app.get("/health/dependencies")
+    Guaranteed to return **HTTP 200** as long as uvicorn is running;
+    used by the Dockerfile HEALTHCHECK and HF Spaces health probe.
+    """
+    uptime_s = round((datetime.now(timezone.utc) - _STARTUP_TIME).total_seconds())
+    return {
+        "status": "ok",
+        "message": "CareerPath AI Backend is running",
+        "version": app.version,
+        "uptime_seconds": uptime_s,
+    }
+
+@app.get(
+    "/health/dependencies",
+    tags=["health"],
+    summary="Dependency readiness check",
+    response_description="Status of corpus, embeddings, HF token, ChromaDB, and AI routes",
+)
 async def health_dependencies():
     hf_token_set = bool(_os.getenv('HF_TOKEN', ''))
     embeddings_loaded = len([
@@ -305,8 +389,16 @@ async def health_dependencies():
     chroma_ok = _CHROMA_COLLECTION is not None
     corpus_ok = len(_CORPUS_EMBEDDINGS) > 0
 
-    if corpus_ok and embeddings_loaded:
+    # AI routes (/roadmap, /interview/*, /face-expression) require a working
+    # HF token AND reachable inference endpoint. Report 'degraded' when either
+    # is absent so callers know AI-heavy endpoints will return 502.
+    ai_ready = hf_token_set and hf_reachable
+
+    if corpus_ok and embeddings_loaded and ai_ready:
         overall = 'ok'
+    elif corpus_ok and embeddings_loaded:
+        # Core RAG / chat is functional; LLM-backed routes may 502
+        overall = 'degraded'
     elif corpus_ok:
         overall = 'degraded'
     else:
@@ -317,6 +409,7 @@ async def health_dependencies():
         'embeddings_loaded': embeddings_loaded,
         'hf_token': 'set' if hf_token_set else 'missing',
         'hf_inference_reachable': hf_reachable,
+        'ai_routes_ready': ai_ready,
         'chroma_connected': chroma_ok,
         'chroma_chunks': _CHROMA_COLLECTION.count() if chroma_ok else 0,
         'use_local_embeddings': _USE_LOCAL_EMBEDDINGS,
@@ -324,19 +417,17 @@ async def health_dependencies():
         'overall': overall
     }
 
-def _check_st_installed() -> bool:
-    try:
-        import sentence_transformers
-        return True
-    except ImportError:
-        return False
-
 
 @app.options("/summarize-cv")
 async def options_summarize_cv():
     return {"message": "OK"}
 
-@app.post("/summarize-cv")
+@app.post(
+    "/summarize-cv",
+    tags=["cv"],
+    summary="Parse and analyse a PDF CV",
+    response_description="Extracted skills, tools, roles, raw text, and hot-skill suggestions",
+)
 async def summarize_cv(file: UploadFile = File(...)):
     MAX_CV_BYTES = 10 * 1024 * 1024  # 10 MB hard cap (Vercel function memory ~512 MB)
     try:
@@ -389,13 +480,13 @@ async def summarize_cv(file: UploadFile = File(...)):
                 ))
                 parsed_data[key] = merged
         except Exception as merge_err:
-            print(f'[summarize-cv] LLM merge skipped: {merge_err}')
+            log.warning('[summarize-cv] LLM merge skipped: %s', merge_err)
 
         # Step 3: best-effort hot-skill suggestion (also server-side).
         try:
             hot_skills_suggestion = await _llm_hot_skills(parsed_data)
         except Exception as hs_err:
-            print(f'[summarize-cv] hot-skills skipped: {hs_err}')
+            log.warning('[summarize-cv] hot-skills skipped: %s', hs_err)
             hot_skills_suggestion = ''
 
         return {
@@ -423,7 +514,12 @@ async def options_career_dna():
     return {"message": "OK"}
 
 
-@app.post("/career-dna")
+@app.post(
+    "/career-dna",
+    tags=["analytics"],
+    summary="Score skills across 5 Career DNA categories",
+    response_description="ExplainabilityEnvelope with per-category scores, factors, and confidence",
+)
 async def career_dna(req: Dict[str, Any]):
     """Score the user across 5 DNA categories and return a full envelope.
 
@@ -465,7 +561,12 @@ async def options_readiness_score():
     return {"message": "OK"}
 
 
-@app.post("/readiness-score")
+@app.post(
+    "/readiness-score",
+    tags=["analytics"],
+    summary="Compute a 0–100 career readiness score",
+    response_description="Weighted aggregate score: DNA 40% + Profile 30% + Interview 30%",
+)
 async def readiness_score(req: Dict[str, Any]):
     """Compute a 0-100 readiness score and return a full envelope.
 
@@ -557,7 +658,12 @@ async def options_explain_match():
     return {"message": "OK"}
 
 
-@app.post("/explain-match")
+@app.post(
+    "/explain-match",
+    tags=["analytics"],
+    summary="Wrap a job-match result in an ExplainabilityEnvelope",
+    response_description="Factors, confidence, and signal types for a precomputed match score",
+)
 async def explain_match(req: Dict[str, Any]):
     """Wrap an existing job match result into an ExplainabilityEnvelope.
 
@@ -637,7 +743,12 @@ async def options_career_advice():
     return {"message": "OK"}
 
 
-@app.get("/career-advice")
+@app.get(
+    "/career-advice",
+    tags=["data"],
+    summary="Search career advice Q&A items",
+    response_description="Matching advice items with optional keyword and tag filters",
+)
 async def career_advice(q: str = "", tag: str = "", limit: int = 5):
     """Return matching career advice items.
 
@@ -700,7 +811,12 @@ async def options_skill_roadmap():
     return {"message": "OK"}
 
 
-@app.get("/skill-roadmap")
+@app.get(
+    "/skill-roadmap",
+    tags=["data"],
+    summary="Retrieve skill roadmaps by career track",
+    response_description="Roadmap items optionally filtered by track (Frontend, Backend, DevOps, AI/ML)",
+)
 async def skill_roadmap(track: str = ""):
     """Return skill roadmaps, optionally filtered by track.
 
@@ -737,10 +853,7 @@ async def skill_roadmap_post(req: Dict[str, Any]):
 # ---------------------------------------------------------------------------
 
 # ── RAG GLOBALS ──────────────────────────────────────────────
-import math
-import os as _os
-import re
-import threading
+# (stdlib imports: asyncio, math, os, re, threading are all hoisted to top of file)
 
 _CORPUS_EMBEDDINGS = []          # flat file fallback (kept for /health/dependencies)
 _CORPUS_CHUNKS = []
@@ -791,19 +904,19 @@ def _load_corpus():
         if _EMBEDDINGS_PATH.exists():
             _CORPUS_EMBEDDINGS = _load_json(_EMBEDDINGS_PATH)
             count = len([c for c in _CORPUS_EMBEDDINGS if c.get('embedding')])
-            print(f'Corpus embeddings loaded: {count} chunks with embeddings')
+            log.info('Corpus embeddings loaded: %d chunks with embeddings', count)
         else:
             _CORPUS_EMBEDDINGS = []
-            print(f'corpus_embeddings.json not found at {_EMBEDDINGS_PATH} — keyword fallback only')
+            log.warning("corpus_embeddings.json not found at %s - keyword fallback only", _EMBEDDINGS_PATH)
 
         if _CHUNKS_PATH.exists():
             _CORPUS_CHUNKS = _load_json(_CHUNKS_PATH)
-            print(f'Corpus chunks loaded: {len(_CORPUS_CHUNKS)} chunks')
+            log.info('Corpus chunks loaded: %d chunks', len(_CORPUS_CHUNKS))
         else:
             _CORPUS_CHUNKS = []
-            print(f'chunks.json not found at {_CHUNKS_PATH}')
+            log.warning('chunks.json not found at %s', _CHUNKS_PATH)
     except Exception as e:
-        print(f'Corpus load error: {e}')
+        log.error('Corpus load error: %s', e)
 
 
 # ── TASK 1 — Hybrid corpus loader ────────────────────────────
@@ -854,15 +967,15 @@ def _load_hybrid_corpus():
                 _DF_CACHE[tok] = _DF_CACHE.get(tok, 0) + 1
 
         _HYBRID_READY = True
-        print(f'[RAG] Hybrid corpus loaded: {len(_HYBRID_CORPUS)} items')
-        print(f'[RAG] BM25 index: {len(_DF_CACHE)} unique tokens, avg_doc_len={_AVG_DOC_LEN:.1f}')
+        log.info('[RAG] Hybrid corpus loaded: %d items', len(_HYBRID_CORPUS))
+        log.info('[RAG] BM25 index: %d unique tokens, avg_doc_len=%.1f', len(_DF_CACHE), _AVG_DOC_LEN)
 
         # Eagerly warm the dense embedding cache in a background thread
         t = threading.Thread(target=_warm_embed_cache, daemon=True)
         t.start()
 
     except Exception as e:
-        print(f'[RAG] Hybrid corpus load error: {e}')
+        log.error('[RAG] Hybrid corpus load error: %s', e)
         _HYBRID_READY = False
 
 
@@ -873,9 +986,9 @@ def _get_local_model():
         try:
             from sentence_transformers import SentenceTransformer
             _LOCAL_EMBED_MODEL = SentenceTransformer('all-mpnet-base-v2')
-            print('Local embedding model loaded')
+            log.info('Local embedding model loaded')
         except Exception as e:
-            print(f'Local model load failed: {e}')
+            log.error('Local model load failed: %s', e)
     return _LOCAL_EMBED_MODEL
 
 
@@ -889,9 +1002,9 @@ def _get_reranker():
                 max_length=512,
             )
             _RERANKER_READY = True
-            print("[RAG] Reranker loaded: cross-encoder/ms-marco-MiniLM-L-6-v2")
+            log.info("[RAG] Reranker loaded: cross-encoder/ms-marco-MiniLM-L-6-v2")
         except Exception as e:
-            print(f"[RAG] Reranker load failed: {e}")
+            log.error("[RAG] Reranker load failed: %s", e)
             _RERANKER_READY = False
     return _RERANKER_MODEL
 
@@ -919,7 +1032,7 @@ def _rerank(query: str, candidates: list[dict], top_n: int = 5) -> list[dict]:
         reranked = sorted(candidates, key=lambda x: x["_rerank_score"], reverse=True)
         return reranked[:top_n]
     except Exception as e:
-        print(f"[RAG] Reranker inference failed: {e}")
+        log.warning("[RAG] Reranker inference failed: %s", e)
         return candidates[:top_n]
 
 
@@ -949,7 +1062,7 @@ def _hf_embed(text: str):
         _LAST_EMBED_PATH = 'hf'
         return result[0] if isinstance(result[0], list) else result
     except Exception as e:
-        print(f'HF API embed failed: {e}')
+        log.warning('HF API embed failed: %s', e)
         return None
 
 
@@ -966,7 +1079,7 @@ def _embed(text: str):
                 _LAST_EMBED_PATH = 'local'
                 return m.encode(text, normalize_embeddings=True).tolist()
         except Exception as e:
-            print(f'Local embed failed: {e}')
+            log.warning('Local embed failed: %s', e)
 
     # Try HF API fallback
     if _HF_TOKEN:
@@ -989,7 +1102,7 @@ def _embed(text: str):
             _LAST_EMBED_PATH = 'hf'
             return result[0] if isinstance(result[0], list) else result
         except Exception as e:
-            print(f'HF API embed failed: {e}')
+            log.warning('HF API embed failed: %s', e)
 
     return None
 
@@ -1001,7 +1114,7 @@ def _warm_embed_cache():
         return
     model = _get_local_model()
     if model is None:
-        print('[RAG] Embedding cache warm skipped — local model unavailable')
+        log.info("[RAG] Embedding cache warm skipped - local model unavailable")
         return
     warmed = 0
     for item in _HYBRID_CORPUS:
@@ -1017,8 +1130,8 @@ def _warm_embed_cache():
                 _ITEM_EMBED_CACHE[item_id] = emb
                 warmed += 1
             except Exception as e:
-                print(f'[RAG] Embed warm error for {item_id}: {e}')
-    print(f'[RAG] Embedding cache warmed: {warmed} items')
+                log.warning('[RAG] Embed warm error for %s: %s', item_id, e)
+    log.info('[RAG] Embedding cache warmed: %d items', warmed)
 
 
 # ── Cosine similarity (pure Python, no numpy) ─────────────────
@@ -1187,7 +1300,7 @@ async def _dense_score_all(
             if model is not None:
                 q_emb = model.encode(query, normalize_embeddings=True).tolist()
         except Exception as e:
-            print(f"[RAG] Dense embed failed: {e}")
+            log.warning('[RAG] Dense embed failed: %s', e)
             return [0.0] * len(corpus)
 
     if not q_emb:
@@ -1312,9 +1425,9 @@ def _init_chroma():
         )
         if _CHROMA_COLLECTION.count() == 0:
             _populate_chroma()
-        print(f'ChromaDB ready: {_CHROMA_COLLECTION.count()} chunks')
+        log.info('ChromaDB ready: %d chunks', _CHROMA_COLLECTION.count())
     except Exception as e:
-        print(f'ChromaDB unavailable ({e}) — flat file fallback active')
+        log.warning("ChromaDB unavailable (%s) - flat file fallback active", str(e))
         _CHROMA_CLIENT = None
         _CHROMA_COLLECTION = None
 
@@ -1344,7 +1457,7 @@ def _populate_chroma():
             documents=docs[i:i+500],
             metadatas=metas[i:i+500]
         )
-    print(f'ChromaDB populated: {len(ids)} chunks')
+    log.info('ChromaDB populated: %d chunks', len(ids))
 
 
 # LEGACY: extract_search_query — kept for compatibility
@@ -1418,7 +1531,7 @@ def retrieve_sources(query: str, top_k: int = 3):
                     _QUERY_CACHE[cache_key] = (sources, 'chroma')
                     return sources, 'chroma'
         except Exception as e:
-            print(f'ChromaDB query failed: {e}')
+            log.warning('ChromaDB query failed: %s', e)
 
     # LEGACY flat file cosine search
     if _CORPUS_EMBEDDINGS:
@@ -1444,7 +1557,7 @@ def retrieve_sources(query: str, top_k: int = 3):
                     _QUERY_CACHE[cache_key] = (sources, path)
                     return sources, path
         except Exception as e:
-            print(f'Flat cosine search failed: {e}')
+            log.warning('Flat cosine search failed: %s', e)
 
     # LEGACY keyword fallback
     sources = _keyword_search(query, top_k)
@@ -1623,7 +1736,13 @@ async def options_chat():
     return {'message': 'OK'}
 
 
-@app.post('/chat', response_model=ChatResponse)
+@app.post(
+    '/chat',
+    response_model=ChatResponse,
+    tags=["chat"],
+    summary="Hybrid RAG career Q&A",
+    response_description="Answer, sources, explainability factors, confidence, and retrieval path",
+)
 async def chat(body: ChatRequest):
     """Hybrid RAG career assistant."""
     try:
@@ -1739,7 +1858,7 @@ async def chat(body: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f'Error in chat endpoint: {e}')
+        log.error('Error in chat endpoint: %s', e)
         raise HTTPException(status_code=500, detail=f'Chat error: {e}')
 
 
@@ -1755,13 +1874,13 @@ def _load_generator():
     """
     global _GENERATOR_PIPELINE, _GENERATOR_READY
     if _os.getenv("ENABLE_LLM_GENERATOR", "false").lower() != "true":
-        print("[GEN] ENABLE_LLM_GENERATOR is not 'true' — using template fallback.")
+        log.info("[GEN] ENABLE_LLM_GENERATOR is not 'true' - using template fallback.")
         _GENERATOR_READY = False
         return
     try:
         import torch
         from transformers import pipeline as hf_pipeline
-        print(f"[GEN] Loading {_GENERATOR_MODEL_NAME} ...")
+        log.info("[GEN] Loading %s ...", _GENERATOR_MODEL_NAME)
         _GENERATOR_PIPELINE = hf_pipeline(
             "text-generation",
             model=_GENERATOR_MODEL_NAME,
@@ -1770,9 +1889,9 @@ def _load_generator():
             trust_remote_code=True,
         )
         _GENERATOR_READY = True
-        print(f"[GEN] {_GENERATOR_MODEL_NAME} ready.")
+        log.info("[GEN] %s ready.", _GENERATOR_MODEL_NAME)
     except Exception as e:
-        print(f"[GEN] Generator load failed (template fallback active): {e}")
+        log.error("[GEN] Generator load failed (template fallback active): %s", e)
         _GENERATOR_READY = False
 
 
@@ -1814,7 +1933,7 @@ def _generate_rag_answer(
         )
         return result[0]["generated_text"].strip()
     except Exception as e:
-        print(f"[GEN] Generation failed: {e}")
+        log.error("[GEN] Generation failed: %s", e)
         return build_rag_answer(query, fallback_sources) if callable(
             globals().get("build_rag_answer")
         ) else "Generation failed. Please try again."
@@ -1828,7 +1947,7 @@ def _generate_rag_answer(
 # The frontend now POSTs structured payloads and the backend handles HF
 # retrieval + generation. Token lives ONLY in backend/.env as HF_TOKEN.
 # ===========================================================================
-import asyncio as _asyncio
+# (_asyncio already imported at module top)
 
 _HF_CHAT_URL = 'https://router.huggingface.co/v1/chat/completions'
 _HF_CHAT_MODEL = 'meta-llama/Llama-3.1-8B-Instruct'
@@ -1965,7 +2084,7 @@ async def _rag_context(
     try:
         top = await _hybrid_retrieve(query, filtered, top_k=top_k, alpha=0.5)
     except Exception as e:
-        print(f'[rag_context] retrieve failed: {e}')
+        log.warning('[rag_context] retrieve failed: %s', e)
         return ''
     return _build_context_window(top)
 
@@ -2005,7 +2124,12 @@ async def options_roadmap():
     return {'message': 'OK'}
 
 
-@app.post('/roadmap')
+@app.post(
+    '/roadmap',
+    tags=["roadmap"],
+    summary="Generate a personalised career roadmap",
+    response_description="Markdown roadmap with assessment, skills gap, step-by-step path, and resources",
+)
 async def roadmap(req: Dict[str, Any]):
     goal_job = (req.get('goalJob') or '').strip()
     if not goal_job:
@@ -2051,7 +2175,12 @@ async def options_interview_question():
     return {'message': 'OK'}
 
 
-@app.post('/interview/question')
+@app.post(
+    '/interview/question',
+    tags=["interview"],
+    summary="Generate a personalised interview question",
+    response_description="One interview question tailored to the candidate role, level, and profile",
+)
 async def interview_question(req: Dict[str, Any]):
     role = (req.get('role') or '').strip()
     difficulty = (req.get('difficulty') or 'intermediate').strip()
@@ -2122,7 +2251,12 @@ async def options_interview_evaluate():
     return {'message': 'OK'}
 
 
-@app.post('/interview/evaluate')
+@app.post(
+    '/interview/evaluate',
+    tags=["interview"],
+    summary="Evaluate a mock interview answer",
+    response_description="Score 1–10, feedback, strengths, improvements, and optional expression feedback",
+)
 async def interview_evaluate(req: Dict[str, Any]):
     question = (req.get('question') or '').strip()
     answer = (req.get('answer') or '').strip()
@@ -2296,7 +2430,7 @@ async def _llm_structure_cv(raw_text: str) -> Dict[str, List[str]]:
     try:
         raw = await _hf_chat(prompt, max_tokens=400, temperature=0.2)
     except Exception as e:
-        print(f'[cv-structure] HF chat failed: {e}')
+        log.warning('[cv-structure] HF chat failed: %s', e)
         return {'keySkills': [], 'toolsTechnologies': [], 'rolesAndDomains': []}
     parsed = _safe_json_parse(raw)
     if not isinstance(parsed, dict):
@@ -2325,7 +2459,7 @@ async def _llm_hot_skills(cv_analysis: Dict[str, List[str]]) -> str:
     try:
         return await _hf_chat(prompt, max_tokens=180, temperature=0.6)
     except Exception as e:
-        print(f'[hot-skills] HF chat failed: {e}')
+        log.warning('[hot-skills] HF chat failed: %s', e)
         return ''
 
 
@@ -2349,7 +2483,7 @@ def _hf_face_classify_sync(image_bytes: bytes) -> List[Dict[str, Any]]:
     """
     try:
         if not _HF_TOKEN:
-            print('[FACE] HF classify failed: HF_TOKEN is not set on the backend.')
+            log.warning('[FACE] HF classify failed: HF_TOKEN is not set on the backend.')
             return []
 
         import urllib.request
@@ -2393,7 +2527,7 @@ def _hf_face_classify_sync(image_bytes: bytes) -> List[Dict[str, Any]]:
                 time.sleep(1.0 * (2 ** attempt))
 
         if raw is None:
-            print(f'[FACE] HF classify failed: {last_err}')
+            log.warning('[FACE] HF classify failed: %s', last_err)
             return []
 
         # Normalise: lowercase labels (HF returns "Happy"/"Sad"/..., frontend
@@ -2413,7 +2547,7 @@ def _hf_face_classify_sync(image_bytes: bytes) -> List[Dict[str, Any]]:
         normalised.sort(key=lambda x: x['score'], reverse=True)
         return normalised
     except Exception as e:
-        print(f'[FACE] HF classify failed: {e}')
+        log.error('[FACE] HF classify failed: %s', e)
         return []
 
 
@@ -2422,7 +2556,12 @@ async def options_face_expression():
     return {'message': 'OK'}
 
 
-@app.post('/face-expression')
+@app.post(
+    '/face-expression',
+    tags=["face"],
+    summary="Classify facial expression from a webcam frame",
+    response_description="Sorted emotion labels with scores; always HTTP 200 with graceful degradation",
+)
 async def face_expression(file: UploadFile = File(...)):
     """Forward a webcam JPEG frame to the HF expression classifier.
 
@@ -2449,7 +2588,7 @@ async def face_expression(file: UploadFile = File(...)):
         # Belt-and-suspenders: _hf_face_classify_sync already swallows its
         # own errors and returns []. This guards against an unexpected
         # raise from the to_thread wrapper itself.
-        print(f'[FACE] Route error: {e}')
+        log.error('[FACE] Route error: %s', e)
         labels = []
 
     if not isinstance(labels, list):
@@ -2478,7 +2617,7 @@ async def startup_event():
     # immediately and the HEALTHCHECK passes during cold start.
     _threading.Thread(target=_get_reranker, daemon=True).start()
     _threading.Thread(target=_load_generator, daemon=True).start()
-    print("[GEN] Phi-3 + reranker loading in background — template fallback active until ready.")
+    log.info("[GEN] Phi-3 + reranker loading in background - template fallback active until ready.")
     _load_corpus()
     _init_chroma()
 

@@ -10,7 +10,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/home/appuser/.cache/huggingface \
     TRANSFORMERS_CACHE=/home/appuser/.cache/huggingface \
     SENTENCE_TRANSFORMERS_HOME=/home/appuser/.cache/huggingface \
-    ENABLE_LLM_GENERATOR=false
+    ENABLE_LLM_GENERATOR=false \
+    USE_LOCAL_EMBEDDINGS=true
 
 WORKDIR /app
 

@@ -1120,7 +1120,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
             >
               Re-request Camera
             </button>
-            <p className="text-[11px] text-white/45 max-w-sm">
+            <p className="text-[11px] text-text-muted max-w-sm">
               If the prompt does not appear, allow camera access from your browser site settings and retry.
             </p>
           </div>
@@ -1132,7 +1132,7 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
                 Webcam frames are sampled and sent to our backend for expression analysis. Raw frames are not stored.
               </p>
             )}
-            <label className="inline-flex items-center gap-2 text-xs text-white/70">
+            <label className="inline-flex items-center gap-2 text-xs text-text-muted">
               <input
                 type="checkbox"
                 checked={localOnlyMode}
@@ -1141,9 +1141,9 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
                   setHfState(e.target.checked ? 'local-only' : 'idle');
                   setHfError(null);
                 }}
-                className="accent-purple-500"
+                className="accent-purple-500 hidden"
               />
-              Local-only mode
+              <span className="hidden">Local-only mode</span>
             </label>
             <button
               onClick={startCamera}
@@ -1161,8 +1161,8 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
                 updating
               </div>
             )}
-            {/* Top-left: model readiness + tracking confidence */}
-            <div className="absolute top-3 left-3 flex items-center gap-2 text-[10px] uppercase tracking-wider text-white/70 bg-black/30 backdrop-blur-sm rounded-md px-2 py-1">
+            {/* Top-left: tracking confidence indicator */}
+            <div className="absolute top-3 left-3 flex items-center gap-2 text-[10px] uppercase tracking-wider text-white/80 bg-black/40 backdrop-blur-sm rounded-md px-2 py-1">
               <span
                 className={`inline-block w-2 h-2 rounded-full ${
                   trackingScore > 0.6
@@ -1172,23 +1172,16 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
                     : 'bg-red-400'
                 }`}
               />
-              <span className="hidden">
-                {faceApiState === 'ready'
-                  ? `hybrid ${Math.round(trackingScore * 100)}%`
-                  : faceApiState === 'loading'
-                  ? 'Loading modelsâ€¦'
-                  : `backend fallback ${Math.round(trackingScore * 100)}%`}
-              </span>
-              <span>{modelBadge} · {Math.round(trackingScore * 100)}%</span>
+              <span>Tracking · {Math.round(trackingScore * 100)}%</span>
               {calibrated && (
-                <span className="ml-1 text-emerald-300/90 normal-case">Â· calibrated</span>
+                <span className="ml-1 text-emerald-300/90 normal-case">· calibrated</span>
               )}
             </div>
             {/* Bottom-left: live median-smoothed emotion + confidence */}
             {liveEmotion && (
               <div
                 className="absolute bottom-3 left-3 flex items-center gap-2 text-xs bg-section/80 text-purple-400 border border-purple-900/40 backdrop-blur-sm rounded-md px-2.5 py-1.5"
-                title={`Median-smoothed emotion Â· ${Math.round((liveEmotion.score || 0) * 100)}% confidence`}
+                title={`Smoothed emotion · ${Math.round((liveEmotion.score || 0) * 100)}% confidence`}
               >
                 <span className="text-sm leading-none">
                   {EMOTION_META[liveEmotion.label]?.emoji || '\ud83d\ude10'}
@@ -1240,10 +1233,10 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
               animate={{ opacity, x: 0 }}
               exit={{ opacity: 0, x: -10 }}
               transition={{ duration: 0.3 }}
-              className={`flex items-start gap-2 bg-white/5 rounded-lg px-3 py-2 text-xs border-l-2 ${border}`}
+              className={`flex items-start gap-2 bg-bg-elevated/80 dark:bg-white/5 rounded-lg px-3 py-2 text-xs border-l-2 ${border}`}
             >
               <Icon size={14} className={`${iconColor} flex-shrink-0 mt-0.5`} />
-              <p className="text-white/80 leading-snug">{t.tip}</p>
+              <p className="text-text-main leading-snug">{t.tip}</p>
             </motion.div>
           );
         })}
@@ -1252,13 +1245,13 @@ const FaceExpressionOverlay = forwardRef(function FaceExpressionOverlay(
       {tipQueue.length === 0 && cameraStarted && !camError && (
         <div className="text-[11px] italic px-1">
           {updating ? (
-            <span className="text-purple-300/80">Analysing your expressionâ€¦</span>
+            <span className="text-primary-light">Analysing your expressionâ€¦</span>
           ) : hfError ? (
-            <span className="text-amber-300/90">
-              Hugging Face is warming up the model â€” first tip can take up to 20s. ({hfError})
+            <span className="text-amber-500 dark:text-amber-300/90">
+              Model is warming up â€” first tip can take up to 20s. ({hfError})
             </span>
           ) : (
-            <span className="text-white/40">Waiting for the first frameâ€¦</span>
+            <span className="text-text-muted">Waiting for the first frameâ€¦</span>
           )}
         </div>
       )}

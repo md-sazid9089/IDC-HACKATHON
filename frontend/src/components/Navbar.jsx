@@ -65,9 +65,30 @@ const Navbar = () => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showAIMenu, setShowAIMenu] = useState(false);
-  const aiCloseTimer = useRef(null);
+  const aiMenuRef = useRef(null);
   const location = useLocation();
   const { currentUser, logout } = useAuth();
+
+  // Close AI Tools dropdown on outside click / Escape
+  useEffect(() => {
+    if (!showAIMenu) return;
+    const handlePointer = (e) => {
+      if (aiMenuRef.current && !aiMenuRef.current.contains(e.target)) {
+        setShowAIMenu(false);
+      }
+    };
+    const handleKey = (e) => {
+      if (e.key === 'Escape') setShowAIMenu(false);
+    };
+    document.addEventListener('mousedown', handlePointer);
+    document.addEventListener('touchstart', handlePointer);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handlePointer);
+      document.removeEventListener('touchstart', handlePointer);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [showAIMenu]);
 
   useEffect(() => {
     let rafId = null;
@@ -99,14 +120,6 @@ const Navbar = () => {
     } catch (error) {
       console.error('Logout error:', error);
     }
-  };
-
-  const openAIMenu = () => {
-    if (aiCloseTimer.current) clearTimeout(aiCloseTimer.current);
-    setShowAIMenu(true);
-  };
-  const closeAIMenuDelayed = () => {
-    aiCloseTimer.current = setTimeout(() => setShowAIMenu(false), 120);
   };
 
   const isActive = (href) => location.pathname === href;
@@ -191,13 +204,10 @@ const Navbar = () => {
 
             {/* AI Tools dropdown (only when authed) */}
             {currentUser && (
-              <div
-                className="relative"
-                onMouseEnter={openAIMenu}
-                onMouseLeave={closeAIMenuDelayed}
-              >
+              <div className="relative" ref={aiMenuRef}>
                 <button
                   type="button"
+                  onClick={() => setShowAIMenu((s) => !s)}
                   className={`relative inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-medium transition-colors duration-200 ${
                     showAIMenu ? 'text-primary-light' : 'text-text-muted hover:text-text-main'
                   }`}
@@ -219,9 +229,10 @@ const Navbar = () => {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -8, scale: 0.96 }}
                       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                      className="absolute top-full left-0 mt-2 w-72 rounded-2xl glass-panel py-2 z-50"
+                      className="absolute top-full left-0 pt-2 w-72 z-50"
                       role="menu"
                     >
+                      <div className="rounded-2xl glass-panel py-2">
                       {aiFeatures.map((feature) => {
                         const Icon = feature.icon;
                         const active = isActive(feature.href);
@@ -247,6 +258,7 @@ const Navbar = () => {
                           </Link>
                         );
                       })}
+                      </div>
                     </motion.div>
                   )}
                 </AnimatePresence>

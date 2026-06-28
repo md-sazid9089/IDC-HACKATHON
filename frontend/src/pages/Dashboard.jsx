@@ -799,7 +799,7 @@ const SkillGapResourceCard = ({ resource, index }) => (
       {resource.relatedSkills?.slice(0, 3).map((skill, idx) => (
         <span 
           key={idx} 
-          className="text-xs px-2 py-1 bg-purple-500/10 text-purple-300 rounded"
+          className="text-xs px-2 py-1 bg-purple-500/10 text-primary rounded"
         >
           {skill}
         </span>

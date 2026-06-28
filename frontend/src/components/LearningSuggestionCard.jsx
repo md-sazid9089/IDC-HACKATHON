@@ -12,7 +12,7 @@ const LearningSuggestionCard = ({ suggestions }) => {
         animate={{ opacity: 1 }}
         className="bg-gradient-to-br from-purple-900/20 to-blue-900/20 backdrop-blur-sm border border-purple-500/20 rounded-2xl p-6"
       >
-        <div className="flex items-center gap-3 text-gray-400">
+        <div className="flex items-center gap-3 text-text-muted">
           <BookOpen className="w-5 h-5" />
           <p className="text-sm">No learning resources found for these skills yet.</p>
         </div>
@@ -79,11 +79,11 @@ const LearningSuggestionCard = ({ suggestions }) => {
             >
               <div className="flex items-center gap-3">
                 <div className="px-3 py-1 bg-pink-500/20 border border-pink-500/40 rounded-lg">
-                  <span className="text-sm font-semibold text-pink-300">
+                  <span className="text-sm font-semibold text-accent-pink">
                     {suggestion.skill}
                   </span>
                 </div>
-                <span className="text-xs text-gray-400">
+                <span className="text-xs text-text-muted">
                   {suggestion.resources.length} resource{suggestion.resources.length !== 1 ? 's' : ''}
                 </span>
               </div>
@@ -122,7 +122,7 @@ const LearningSuggestionCard = ({ suggestions }) => {
                             </h4>
                           </div>
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs text-gray-400">
+                            <span className="text-xs text-text-muted">
                               {resource.platform}
                             </span>
                             <span className="text-gray-600">•</span>
@@ -164,7 +164,7 @@ const LearningSuggestionCard = ({ suggestions }) => {
 
       {/* Footer Info */}
       <div className="mt-4 p-3 bg-purple-900/20 rounded-lg border border-purple-500/10">
-        <p className="text-xs text-gray-400 text-center">
+        <p className="text-xs text-text-muted text-center">
            Click on each skill to view recommended learning resources
         </p>
       </div>

@@ -304,7 +304,7 @@ const ResourceCard = ({ resource, index }) => (
     {/* For Skill Badge */}
     {resource.forSkill && (
       <div className="mb-4 p-2 bg-purple-500/10 rounded-lg">
-        <p className="text-xs text-purple-300">
+        <p className="text-xs text-primary">
           <Sparkles className="inline mr-1" size={12} />
           Recommended for: <span className="font-semibold">{resource.forSkill}</span>
         </p>
@@ -316,13 +316,13 @@ const ResourceCard = ({ resource, index }) => (
       {resource.relatedSkills?.slice(0, 3).map((skill, idx) => (
         <span 
           key={idx} 
-          className="text-xs px-2 py-1 bg-purple-500/10 text-purple-300 rounded"
+          className="text-xs px-2 py-1 bg-purple-500/10 text-primary rounded"
         >
           {skill}
         </span>
       ))}
       {resource.relatedSkills?.length > 3 && (
-        <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-300 rounded">
+        <span className="text-xs px-2 py-1 bg-purple-500/10 text-primary rounded">
           +{resource.relatedSkills.length - 3} more
         </span>
       )}

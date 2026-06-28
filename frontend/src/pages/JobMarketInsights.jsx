@@ -99,7 +99,7 @@ const JobMarketInsights = () => {
               <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent mb-3">
                 Bangladesh Job Market Insights 2025
               </h1>
-              <p className="text-gray-400 text-base max-w-3xl mx-auto">
+              <p className="text-text-muted text-base max-w-3xl mx-auto">
                 Comprehensive analysis of employment trends, industry growth, and top opportunities
               </p>
             </div>
@@ -112,7 +112,7 @@ const JobMarketInsights = () => {
             className={`px-8 py-3 rounded-xl font-semibold transition-all duration-300 ${
               activeTab === 'employment'
                 ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/50 scale-105'
-                : 'bg-[rgb(var(--c-on-card)/0.05)] text-gray-400 hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
+                : 'bg-[rgb(var(--c-on-card)/0.05)] text-text-muted hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
             }`}
           >
             Employment Rates
@@ -122,7 +122,7 @@ const JobMarketInsights = () => {
             className={`px-8 py-3 rounded-xl font-semibold transition-all duration-300 ${
               activeTab === 'industry'
                 ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/50 scale-105'
-                : 'bg-[rgb(var(--c-on-card)/0.05)] text-gray-400 hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
+                : 'bg-[rgb(var(--c-on-card)/0.05)] text-text-muted hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
             }`}
           >
             Industry Growth
@@ -132,7 +132,7 @@ const JobMarketInsights = () => {
             className={`px-8 py-3 rounded-xl font-semibold transition-all duration-300 ${
               activeTab === 'topjobs'
                 ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/50 scale-105'
-                : 'bg-[rgb(var(--c-on-card)/0.05)] text-gray-400 hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
+                : 'bg-[rgb(var(--c-on-card)/0.05)] text-text-muted hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
             }`}
           >
             Top Jobs 2025
@@ -142,7 +142,7 @@ const JobMarketInsights = () => {
             className={`px-8 py-3 rounded-xl font-semibold transition-all duration-300 ${
               activeTab === 'opportunities'
                 ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-500/50 scale-105'
-                : 'bg-[rgb(var(--c-on-card)/0.05)] text-gray-400 hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
+                : 'bg-[rgb(var(--c-on-card)/0.05)] text-text-muted hover:bg-[rgb(var(--c-on-card)/0.1)] hover:text-text-main border border-[rgb(var(--c-on-card)/0.1)]'
             }`}
           >
             Sector Opportunities
@@ -171,11 +171,11 @@ const JobMarketInsights = () => {
                   </div>
                   <div className="space-y-4">
                     <div className="bg-green-500/10 rounded-xl p-4 border border-green-500/20">
-                      <p className="text-xs text-gray-400 mb-2">Employment Rate</p>
+                      <p className="text-xs text-text-muted mb-2">Employment Rate</p>
                       <p className="text-4xl font-bold text-green-400">{item.employmentRate}%</p>
                     </div>
                     <div className="bg-red-500/10 rounded-xl p-4 border border-red-500/20">
-                      <p className="text-xs text-gray-400 mb-2">Unemployment Rate</p>
+                      <p className="text-xs text-text-muted mb-2">Unemployment Rate</p>
                       <p className="text-4xl font-bold text-red-400">{item.unemploymentRate}%</p>
                     </div>
                   </div>
@@ -210,11 +210,11 @@ const JobMarketInsights = () => {
                   </div>
                   <div className="space-y-4">
                     <div className="bg-green-500/10 rounded-xl p-4 border border-green-500/20">
-                      <p className="text-xs text-gray-400 mb-2">Growth Rate</p>
+                      <p className="text-xs text-text-muted mb-2">Growth Rate</p>
                       <p className="text-3xl font-bold text-green-400">+{item.growthRate}%</p>
                     </div>
                     <div className="bg-purple-500/10 rounded-xl p-4 border border-purple-500/20">
-                      <p className="text-xs text-gray-400 mb-2">Avg Salary</p>
+                      <p className="text-xs text-text-muted mb-2">Avg Salary</p>
                       <p className="text-2xl font-bold text-purple-400">৳{item.averageSalaryBDT.toLocaleString()}</p>
                     </div>
                   </div>
@@ -254,12 +254,12 @@ const JobMarketInsights = () => {
                     </div>
                   </div>
                   <div className="bg-purple-500/10 rounded-xl p-4 border border-purple-500/20 w-full md:w-auto md:min-w-[180px]">
-                    <p className="text-xs text-gray-400 mb-1">Average Salary</p>
+                    <p className="text-xs text-text-muted mb-1">Average Salary</p>
                     <p className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent break-words">৳{job.avgSalaryBDT.toLocaleString()}</p>
                   </div>
                 </div>
                 <div className="bg-[rgb(var(--c-shadow) / 0.2)] rounded-xl p-4">
-                  <p className="text-xs text-gray-400 mb-3 font-medium">Required Skills:</p>
+                  <p className="text-xs text-text-muted mb-3 font-medium">Required Skills:</p>
                   <div className="flex flex-wrap gap-2">
                     {job.requiredSkills.map((skill, idx) => (
                       <span
@@ -300,10 +300,10 @@ const JobMarketInsights = () => {
                     <h3 className="text-xl font-bold text-white">{item.sector}</h3>
                   </div>
                   <div className="bg-[rgb(var(--c-shadow) / 0.2)] rounded-xl p-5">
-                    <p className="text-xs text-gray-400 mb-3">Opportunity Score</p>
+                    <p className="text-xs text-text-muted mb-3">Opportunity Score</p>
                     <div className="flex items-end gap-2 mb-4">
                       <p className="text-3xl sm:text-4xl md:text-5xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">{item.opportunityScore}</p>
-                      <p className="text-gray-400 text-xl mb-2">/100</p>
+                      <p className="text-text-muted text-xl mb-2">/100</p>
                     </div>
                     <div className="w-full bg-[rgb(var(--c-on-card)/0.1)] rounded-full h-3 overflow-hidden">
                       <motion.div

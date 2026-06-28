@@ -217,7 +217,7 @@ const Jobs = () => {
         >
           {/* Search */}
           <div className="flex-1 relative">
-            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+            <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-text-muted" size={20} />
             <input
               type="text"
               placeholder="Search by title, company, or skills..."

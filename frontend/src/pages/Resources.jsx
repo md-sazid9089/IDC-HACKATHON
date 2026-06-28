@@ -252,15 +252,15 @@ const CourseResources = () => {
             <BookOpen size={64} className="mx-auto text-purple-400" />
           </div>
           <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold mb-4 bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent animate-pulse">Course Resources</h1>
-          <p className="text-base sm:text-xl text-gray-300 max-w-2xl mx-auto">Explore our comprehensive collection of courses and start your learning journey today</p>
+          <p className="text-base sm:text-xl text-text-muted max-w-2xl mx-auto">Explore our comprehensive collection of courses and start your learning journey today</p>
           <div className="mt-8 flex flex-wrap justify-center gap-4 text-sm">
             <div className="bg-purple-500/20 px-4 py-2 rounded-lg border border-purple-500/30">
-              <span className="text-purple-300 font-semibold">{courses.length}</span>
-              <span className="text-gray-400 ml-1">Courses Available</span>
+              <span className="text-primary font-semibold">{courses.length}</span>
+              <span className="text-text-muted ml-1">Courses Available</span>
             </div>
             <div className="bg-pink-500/20 px-4 py-2 rounded-lg border border-pink-500/30">
-              <span className="text-pink-300 font-semibold">{enrolledCourses.size}</span>
-              <span className="text-gray-400 ml-1">Your Enrollments</span>
+              <span className="text-accent-pink font-semibold">{enrolledCourses.size}</span>
+              <span className="text-text-muted ml-1">Your Enrollments</span>
             </div>
           </div>
         </div>
@@ -283,7 +283,7 @@ const CourseResources = () => {
               {searchTerm && (
                 <button
                   onClick={() => setSearchTerm('')}
-                  className="absolute right-5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-text-main transition-colors"
+                  className="absolute right-5 top-1/2 transform -translate-y-1/2 text-text-muted hover:text-text-main transition-colors"
                 >
                   <X size={20} />
                 </button>
@@ -296,7 +296,7 @@ const CourseResources = () => {
         {currentUser && (
           <div className="mb-8 text-center">
             <div className="inline-block bg-gradient-to-r from-purple-500/10 to-pink-500/10 border border-purple-500/30 px-6 py-3 rounded-xl">
-              <p className="text-sm text-gray-400">
+              <p className="text-sm text-text-muted">
                 Signed in as: <span className="font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent">{currentUser.email}</span>
               </p>
             </div>
@@ -345,7 +345,7 @@ const CourseResources = () => {
                       {course.name}
                     </h3>
                     
-                    <p className="text-gray-400 text-sm mb-5 line-clamp-3 leading-relaxed">
+                    <p className="text-text-muted text-sm mb-5 line-clamp-3 leading-relaxed">
                       {course.overview}
                     </p>
 
@@ -354,7 +354,7 @@ const CourseResources = () => {
                       <div className="p-1.5 bg-purple-500/20 rounded-lg">
                         <Users size={16} className="text-purple-400" />
                       </div>
-                      <span className="text-sm font-semibold text-gray-300">{course.enrollments.length} student{course.enrollments.length !== 1 ? 's' : ''} enrolled</span>
+                      <span className="text-sm font-semibold text-text-muted">{course.enrollments.length} student{course.enrollments.length !== 1 ? 's' : ''} enrolled</span>
                     </div>
 
                     {/* Action Buttons */}

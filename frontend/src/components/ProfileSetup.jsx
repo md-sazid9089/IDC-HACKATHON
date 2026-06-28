@@ -228,7 +228,7 @@ const ProfileSetup = ({ initialData = null, onUpdate = null }) => {
 
       {/* Info Box */}
       <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-        <p className="text-sm text-blue-300">
+        <p className="text-sm text-info">
           â„¹ <strong>Note:</strong> This information will be used to calculate job match scores on the Job Matches page. 
           The more accurate your profile, the better job recommendations you'll receive!
         </p>

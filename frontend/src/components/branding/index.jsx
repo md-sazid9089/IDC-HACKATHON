@@ -398,7 +398,7 @@ export function CompetitionCredits({ className = '' }) {
           >
             Competition
           </div>
-          <h3 className="font-heading text-xl font-bold text-white">
+          <h3 className="font-heading text-xl font-bold text-text-main">
             Developed for the CodeFront Challenge
           </h3>
         </div>
@@ -411,19 +411,19 @@ export function CompetitionCredits({ className = '' }) {
       </p>
       <div className="flex flex-wrap items-center gap-8">
         <div className="flex flex-col items-start gap-1">
-          <span className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-text-muted">
             Challenge
           </span>
           <img src={CODEFRONT_LOGO} alt="CodeFront" className="h-7 w-auto" />
         </div>
         <div className="flex flex-col items-start gap-1">
-          <span className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-text-muted">
             Identity
           </span>
           <img src={MINDSPARKS_LOGO} alt="Mindsparks 26" className="h-10 w-auto" />
         </div>
         <div className="flex flex-col items-start gap-1">
-          <span className="text-[10px] uppercase tracking-[0.22em] text-white/40">
+          <span className="text-[10px] uppercase tracking-[0.22em] text-text-muted">
             Organizer
           </span>
           <img src={AUST_IDC_WHITE} alt="AUST IDC" className="h-12 w-auto" />

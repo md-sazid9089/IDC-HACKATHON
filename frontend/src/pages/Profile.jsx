@@ -406,7 +406,7 @@ const Profile = () => {
                     {formData.tools.map((tool, idx) => (
                       <span
                         key={idx}
-                        className="px-3 py-1 bg-purple-500/20 border border-purple-400/40 rounded-full text-sm text-purple-300 flex items-center gap-2"
+                        className="px-3 py-1 bg-purple-500/20 border border-purple-400/40 rounded-full text-sm text-primary flex items-center gap-2"
                       >
                         {tool}
                         <button
@@ -577,7 +577,7 @@ const Profile = () => {
                       profile.tools.map((tool, index) => (
                         <span
                           key={index}
-                          className="px-3 py-1 bg-purple-500/20 border border-purple-400/40 text-purple-300 rounded-full text-sm"
+                          className="px-3 py-1 bg-purple-500/20 border border-purple-400/40 text-primary rounded-full text-sm"
                         >
                           {tool}
                         </span>
@@ -641,7 +641,7 @@ const Profile = () => {
         {/* Export / Download Section */}
         <div className="mt-10 p-6 rounded-2xl bg-[#11121A] border border-[#1F2030]">
           <h3 className="text-lg font-semibold text-white">Export / Download</h3>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-text-muted mt-1">
             Download your profile information as a PDF.
           </p>
           <ProfilePDFDownload profile={profile} />
